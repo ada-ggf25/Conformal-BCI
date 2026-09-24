@@ -1,0 +1,45 @@
+# LaTeX build artifacts
+build/
+
+# Any PDF compiled locally inside this folder
+*.pdf
+
+# LaTeX intermediates if built outside build/
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.synctex(busy)
+*.xdv
+*.dvi
+
+# Bibliography
+*.bbl
+*.blg
+*.bcf
+*.run.xml
+
+# Index / glossary / nomenclature
+*.idx
+*.ilg
+*.ind
+*.glo
+*.gls
+*.glg
+*.ist
+*.acn
+*.acr
+*.alg
+*.nlo
+*.nls
+
+# TikZ/pgf externalisation and latexmk locks
+*.auxlock
+*-figure*.*
+*.figlist
+*.makefile
