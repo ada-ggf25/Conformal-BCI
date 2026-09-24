@@ -1,0 +1,43 @@
+name: docs
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - 'docs/**'
+      - '**/README.md'
+      - '.github/WORKFLOWS.md'
+      - 'tests/docs/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'Makefile'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync Python dependencies
+        run: uv sync
+
+      - name: Install aspell with American English dictionary
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends aspell aspell-en
+
+      - name: Run documentation tests
+        run: make docs-test
