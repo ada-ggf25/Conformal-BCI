@@ -1,0 +1,86 @@
+site_name: Uncertainty-Aware ML for Neural BCIs
+site_description: >
+  Uncertainty-Aware Machine Learning for Long-Term Neural Recordings
+  in Flexible Brain–Computer Interfaces
+site_author: Guilherme Grancho
+repo_url: https://github.com/ada-ggf25/ML-Decoding
+repo_name: ada-ggf25/ML-Decoding
+
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.path
+    - navigation.top
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.superfences
+  - pymdownx.arithmatex:
+      generic: true
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3.2.2/es5/tex-mml-chtml.js
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [.]
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            show_category_heading: true
+            merge_init_into_class: true
+            show_signature_annotations: true
+            separate_signature: true
+            line_length: 88
+            filters:
+              - "!^_"
+
+nav:
+  - Home: index.md
+  - API Reference:
+    - Overview: api/index.md
+    - Models: api/models.md
+    - Data: api/data.md
+    - Database: api/db.md
+    - Utilities: api/utils.md
+    - Conformal: api/conformal.md
+
+validation:
+  anchors: warn
+  unrecognized_links: warn
