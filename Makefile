@@ -1,0 +1,117 @@
+PAPER := paper
+
+.PHONY: setup setup-all setup-python setup-docs setup-latex \
+	paper-test \
+	data-test utils-test models-test conformal-test \
+	src-test docs-test \
+	mkdocs-test mkdocs-build mkdocs-serve \
+	db-test python-lint python-typecheck ci-test \
+	maze cross-maze
+
+# First-time setup, in three tiers.
+#
+#   setup-python    python-checks.yml, src-tests.yml, mkdocs.yml
+#   setup-docs      docs.yml
+#   setup-latex     paper-checks.yml
+#
+#   make setup      the Python environment only. Run the code, its unit
+#                   tests, the linters and the MkDocs build.
+#   make setup-all  every tier.
+setup: setup-python
+
+setup-all: setup-python setup-docs setup-latex
+
+setup-python:
+	uv sync
+
+setup-docs: setup-python
+	sudo apt-get update
+	sudo apt-get install -y --no-install-recommends \
+		aspell \
+		aspell-en
+
+setup-latex: setup-docs
+	sudo apt-get install -y --no-install-recommends \
+		cm-super \
+		latexmk \
+		lmodern \
+		texlive-bibtex-extra \
+		texlive-extra-utils \
+		texlive-fonts-recommended \
+		texlive-latex-base \
+		texlive-latex-extra \
+		texlive-latex-recommended \
+		texlive-pictures \
+		texlive-science
+
+# Paper LaTeX checks.
+paper-test:
+	$(MAKE) -C $(PAPER) ci-test
+
+# Documentation tests (lint + spelling over README files, WORKFLOWS.md and docs/).
+docs-test:
+	uv run pytest tests/docs/ -v
+
+# MkDocs site: CI build check, local static build, live-reload server.
+mkdocs-test:
+	uv run mkdocs build --strict
+
+mkdocs-build: mkdocs-test
+
+mkdocs-serve:
+	uv run mkdocs serve
+
+# Source unit tests.
+src-test:
+	uv run pytest tests/data/ tests/utils/ tests/models/ \
+	  tests/conformal/ tests/db/ -v -m "not integration"
+
+data-test:
+	uv run pytest tests/data/ -v
+
+utils-test:
+	uv run pytest tests/utils/ -v
+
+models-test:
+	uv run pytest tests/models/ -v
+
+conformal-test:
+	uv run pytest tests/conformal/ -v
+
+db-test:
+	uv run pytest tests/db/ -v -m "not integration"
+
+# Python linting and type checking.
+python-lint:
+	uv run ruff check src/ tests/ analyses/
+	uv run ruff format --check src/ tests/ analyses/
+
+python-typecheck:
+	uv run mypy src/ tests/data tests/utils tests/models tests/conformal tests/db tests/docs analyses/
+
+# Experimental analysis run.
+# These need .env + a live MongoDB connection and train models:
+#   make maze                      — train the pooled model for all 3 analyzed mazes
+#   make maze PARADIGM=Y_Maze      — the same, for a single maze
+#   make cross-maze                — compare every maze that has a saved results bundle
+# per_maze.ipynb pools every usable mouse in a paradigm into one model and writes a single
+# bundle to analyses/artifacts/<Paradigm>/ALL_MICE/. cross_maze.ipynb reads those pooled
+# bundles and compares the mazes to analyses/artifacts/cross_maze.ipynb.
+PARADIGM ?=
+_paradigm_name = $(if $(PARADIGM),$(PARADIGM),More_Water Y_Maze Nested_All)
+
+maze:
+	uv run python analyses/run_mazes.py --paradigm $(_paradigm_name)
+
+cross-maze:
+	uv run python -m nbconvert --to notebook --execute analyses/cross_maze.ipynb \
+	  --output-dir analyses/artifacts --output cross_maze.ipynb
+
+# Full CI test suite.
+ci-test:
+	$(MAKE) python-lint
+	$(MAKE) python-typecheck
+	$(MAKE) src-test
+	$(MAKE) docs-test
+	$(MAKE) mkdocs-test
+	$(MAKE) paper-test
