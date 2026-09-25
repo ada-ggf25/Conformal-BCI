@@ -118,47 +118,138 @@ def deployed_operating_point(bundle: dict) -> dict[str, float]:
     }
 
 
+def seed_values(runs: dict[int, dict], fn: Callable[[dict], Any]) -> list[Any]:
+    """``fn`` applied to each seed's bundle, in seed order, dropping ``None`` results.
+
+    Args:
+        runs: seed -> bundle, one maze's entry of ``load_maze_bundles``.
+        fn:   a per-bundle reader.
+    """
+    out = [fn(runs[s]) for s in sorted(runs)]
+    return [v for v in out if v is not None]
+
+
+def mean_sd(values: Sequence[Any]) -> tuple[np.ndarray, np.ndarray]:
+    """Elementwise mean and sample sd (ddof=1) across seeds, ignoring None and NaN.
+
+    ``values`` is one scalar or one equal-length sequence per seed. The sd is NaN where
+    fewer than two seeds have a value, the mean where none has.
+    """
+    rows = [
+        np.array([np.nan if v is None else v for v in np.atleast_1d(x)], dtype=float)
+        for x in values
+    ]
+    if not rows:
+        return np.array([np.nan]), np.array([np.nan])
+    a = np.vstack(rows)
+    n = np.sum(np.isfinite(a), axis=0)
+    total = np.nansum(a, axis=0)
+    mean = np.where(n > 0, total / np.maximum(n, 1), np.nan)
+    dev = np.where(np.isfinite(a), (a - mean) ** 2, 0.0).sum(axis=0)
+    sd = np.where(n > 1, np.sqrt(dev / np.maximum(n - 1, 1)), np.nan)
+    return mean, sd
+
+
 def maze_summary_table(mazes: dict, order: Sequence[str]) -> list[dict[str, Any]]:
-    """One summary row per maze: the cross-maze comparison table.
+    """One summary row per maze: the cross-maze comparison table, aggregated over seeds.
 
     Pulls cohort size, decoder quality, whole-test coverage and the deployed operating
     point through the section readers above, so the table and the figures beside it can
-    never disagree about a number.
+    never disagree about a number. The cohort columns are identical across seeds (the data
+    and the split do not depend on the seed) and come from the first seed.
 
     Args:
-        mazes: paradigm -> bundle, as returned by ``load_maze_bundles``.
+        mazes: paradigm -> {seed: bundle}, as returned by ``load_maze_bundles``.
         order: paradigms to emit, in display order, unknown names are skipped.
 
     Returns:
-        list of row dicts (``maze``, ``n_mice``, ``n_sessions``, ``n_classes``,
-        ``test_windows``, ``raw_test_acc``, ``test_cov``, ``cov_meets_target``,
-        ``n_sessions_below``, ``size_over_k``). Ready for ``pd.DataFrame``.
+        list of row dicts (``maze``, ``n_seeds``, ``n_mice``, ``n_sessions``, ``n_classes``,
+        ``test_windows``, and the mean and ``*_sd`` of ``raw_test_acc``, ``test_cov`` and
+        ``size_over_k``). Ready for ``pd.DataFrame``.
     """
     rows: list[dict[str, Any]] = []
     for p in order:
-        m = mazes.get(p)
-        if m is None:
+        runs = mazes.get(p)
+        if not runs:
             continue
-        wt = whole_test_coverage(m)
-        dep = deployed_operating_point(m)
-        n_classes = m.get("n_classes")
-        rows.append(
-            {
-                "maze": p,
-                "n_mice": n_mice(m),
-                "n_sessions": len(m.get("sessions", [])),
-                "n_classes": n_classes if n_classes is not None else float("nan"),
-                "test_windows": wt["n_windows"],
-                "raw_test_acc": (m.get("decoder") or {}).get(
-                    "raw_accuracy", float("nan")
-                ),
-                "test_cov": wt["coverage"],
-                "cov_meets_target": wt["meets_target"],
-                "n_sessions_below": wt["n_sessions_below"],
-                "size_over_k": dep["size_over_k"],
-            }
-        )
+        first = runs[min(runs)]
+        n_classes = first.get("n_classes")
+        row: dict[str, Any] = {
+            "maze": p,
+            "n_seeds": len(runs),
+            "n_mice": n_mice(first),
+            "n_sessions": len(first.get("sessions", [])),
+            "n_classes": n_classes if n_classes is not None else float("nan"),
+            "test_windows": whole_test_coverage(first)["n_windows"],
+        }
+        per_seed = {
+            "raw_test_acc": seed_values(
+                runs,
+                lambda m: (m.get("decoder") or {}).get("raw_accuracy", float("nan")),
+            ),
+            "test_cov": seed_values(runs, lambda m: whole_test_coverage(m)["coverage"]),
+            "size_over_k": seed_values(
+                runs, lambda m: deployed_operating_point(m)["size_over_k"]
+            ),
+        }
+        for k, v in per_seed.items():
+            mean, sd = mean_sd(v)
+            row[k], row[f"{k}_sd"] = float(mean[0]), float(sd[0])
+        rows.append(row)
     return rows
+
+
+def seed_session_coverage(runs: dict[int, dict]) -> dict[str, Any]:
+    """Per-session test coverage averaged over seeds, matched by session name.
+
+    Returns:
+        ``{"sessions", "coverage", "meets", "target"}``: one entry per session, ``meets``
+        being the seed-mean coverage at or above the target.
+    """
+    by_session: dict[str, list[float]] = {}
+    for s in sorted(runs):
+        tc = (runs[s].get("conformal") or {}).get("test_coverage") or {}
+        for r in tc.get("per_session") or []:
+            by_session.setdefault(r["session"], []).append(float(r["coverage"]))
+    target = whole_test_coverage(runs[min(runs)])["target"]
+    names = list(by_session)
+    cov = [float(np.mean(by_session[n])) for n in names]
+    return {
+        "sessions": names,
+        "coverage": cov,
+        "meets": [c >= target for c in cov],
+        "target": target,
+    }
+
+
+def seed_operating_curves(runs: dict[int, dict]) -> dict[str, Any]:
+    """The retrained coverage-sharpness sweep, mean and sd over seeds, per target.
+
+    Seeds are matched by coverage target (every seed sweeps the same grid). A target
+    missing from a seed counts as missing, not as zero.
+
+    Returns:
+        ``{"target", "coverage", "coverage_sd", "size_over_k", "size_over_k_sd",
+        "coverage_target"}``, sorted by target.
+    """
+    per_seed = [operating_curves(runs[s]) for s in sorted(runs)]
+    targets = sorted({t for oc in per_seed for t in oc["target"]})
+
+    def _aligned(key: str) -> list[list[float]]:
+        out = []
+        for oc in per_seed:
+            by_t = dict(zip(oc["target"], oc[key], strict=True))
+            out.append([by_t.get(t, float("nan")) for t in targets])
+        return out
+
+    out: dict[str, Any] = {
+        "target": targets,
+        "coverage_target": per_seed[0]["coverage_target"],
+    }
+    for key in ("coverage", "size_over_k"):
+        mean, sd = mean_sd(_aligned(key)) if targets else (np.array([]), np.array([]))
+        out[key], out[f"{key}_sd"] = mean.tolist(), sd.tolist()
+    return out
 
 
 def error_correlations_for_bundle(bundle: dict) -> dict | None:
@@ -185,13 +276,28 @@ def error_correlations_for_bundle(bundle: dict) -> dict | None:
     )
 
 
+def _load_bundle(metrics_path: Path) -> dict:
+    """One bundle's ``metrics.json`` plus the paths of its saved arrays and scale net."""
+    m = json.loads(metrics_path.read_text())
+    d = metrics_path.parent
+    m["_arrays_path"] = (d / "arrays.npz") if (d / "arrays.npz").exists() else None
+    m["_scale_net_path"] = (
+        (d / "scale_net.pt") if (d / "scale_net.pt").exists() else None
+    )
+    return m
+
+
 def load_maze_bundles(
     artifacts_dir: Path | str,
     maze_order: tuple[str, ...] = ("More_Water", "Y_Maze", "Nested_All"),
     *,
     log_fn: Callable[[str], None] | None = None,
 ) -> tuple[dict, list[str]]:
-    """Load every pooled per-maze bundle under ``<artifacts_dir>/<Paradigm>/ALL_MICE/metrics.json``.
+    """Load every per-seed bundle under ``<artifacts_dir>/<Paradigm>/ALL_MICE/seed_<k>/``.
+
+    A maze with no ``seed_<k>`` directories falls back to a single bundle directly under
+    ``ALL_MICE/`` (the layout before seed sweeps), keyed by its recorded seed or, for bundles
+    that predate the ``seed`` field, by 42, the notebook's default.
 
     Args:
         artifacts_dir: the ``analyses/artifacts`` directory.
@@ -199,28 +305,25 @@ def load_maze_bundles(
         log_fn:        optional sink for per-skip messages (pass ``print`` to see them).
 
     Returns:
-        ``(mazes, order)``: ``mazes`` keyed by paradigm, ``order`` the display order.
+        ``(mazes, order)``: ``mazes`` maps paradigm -> {seed: bundle}, ``order`` is the
+        display order.
     """
     artifacts_dir = Path(artifacts_dir)
     mazes: dict = {}
-    for mf in sorted(artifacts_dir.glob("*/ALL_MICE/metrics.json")):
-        m = json.loads(mf.read_text())
-        c = m.get("conformal") or {}
-        if "test_coverage" not in c:
-            if log_fn is not None:
-                log_fn(
-                    f"  skip {mf.parent.parent.name}: pooled bundle missing conformal.test_coverage"
-                )
-            continue
-        m["_arrays_path"] = (
-            (mf.parent / "arrays.npz") if (mf.parent / "arrays.npz").exists() else None
-        )
-        m["_scale_net_path"] = (
-            (mf.parent / "scale_net.pt")
-            if (mf.parent / "scale_net.pt").exists()
-            else None
-        )
-        mazes[m.get("paradigm", mf.parent.parent.name)] = m
+    for cohort_dir in sorted(artifacts_dir.glob("*/ALL_MICE")):
+        paths = sorted(cohort_dir.glob("seed_*/metrics.json"))
+        if not paths and (cohort_dir / "metrics.json").exists():
+            paths = [cohort_dir / "metrics.json"]
+        for mf in paths:
+            m = _load_bundle(mf)
+            if "test_coverage" not in (m.get("conformal") or {}):
+                if log_fn is not None:
+                    log_fn(
+                        f"  skip {mf.parent}: bundle missing conformal.test_coverage"
+                    )
+                continue
+            seed = int(m.get("seed", 42))
+            mazes.setdefault(m.get("paradigm", cohort_dir.parent.name), {})[seed] = m
     order = [p for p in maze_order if p in mazes] + [
         p for p in sorted(mazes) if p not in maze_order
     ]
