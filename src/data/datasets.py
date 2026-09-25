@@ -1,7 +1,4 @@
-"""PyTorch Dataset classes and collation utilities for the pipeline.
-
-Adapted from the Liu Lab's cross-session alignment codebase.
-"""
+"""PyTorch Dataset classes and collation utilities for the pipeline."""
 
 from __future__ import annotations
 

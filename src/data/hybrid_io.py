@@ -1,7 +1,4 @@
-"""Neural data extraction and windowing pipeline.
-
-Adapted from the Liu Lab's cross-session alignment codebase.
-"""
+"""Neural data extraction and windowing pipeline."""
 
 from __future__ import annotations
 

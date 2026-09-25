@@ -1,7 +1,5 @@
 """Spatial region classifiers for the Functional Atlas maze paradigms.
 
-Adapted from the Liu Lab's cross-session alignment codebase.
-
 Maps a single (x, y) position reading to an integer region label R0-R7
 (or R0-R8 for the Nested paradigm), called per time-bin during windowing
 to assign region labels to neural windows.
