@@ -6,7 +6,7 @@ PAPER := paper
 	src-test docs-test \
 	mkdocs-test mkdocs-build mkdocs-serve \
 	db-test python-lint python-typecheck ci-test \
-	maze cross-maze
+	maze maze-quick cross-maze
 
 # First-time setup, in three tiers.
 #
@@ -91,17 +91,24 @@ python-typecheck:
 
 # Experimental analysis run.
 # These need .env + a live MongoDB connection and train models:
-#   make maze                      — train the pooled model for all 3 analyzed mazes
-#   make maze PARADIGM=Y_Maze      — the same, for a single maze
-#   make cross-maze                — compare every maze that has a saved results bundle
-# per_maze.ipynb pools every usable mouse in a paradigm into one model and writes a single
-# bundle to analyses/artifacts/<Paradigm>/ALL_MICE/. cross_maze.ipynb reads those pooled
-# bundles and compares the mazes to analyses/artifacts/cross_maze.ipynb.
+#   make maze                          — train the pooled model for all 3 mazes x 5 seeds
+#   make maze PARADIGM=Y_Maze SEEDS=42 — one maze, one seed
+#   make maze-quick                    — 2-epoch smoke run of the plumbing (one seed)
+#   make cross-maze                    — compare every maze that has a saved results bundle
+# per_maze.ipynb pools every usable mouse in a paradigm into one model and writes one bundle
+# per seed to analyses/artifacts/<Paradigm>/ALL_MICE/seed_<k>/. Finished bundles are skipped,
+# so an interrupted sweep resumes. cross_maze.ipynb reads every seed's bundle and reports
+# mean +- sd across seeds to analyses/artifacts/cross_maze.ipynb.
 PARADIGM ?=
+SEEDS ?=
 _paradigm_name = $(if $(PARADIGM),$(PARADIGM),More_Water Y_Maze Nested_All)
+_seed_args = $(if $(SEEDS),--seeds $(SEEDS),)
 
 maze:
-	uv run python analyses/run_mazes.py --paradigm $(_paradigm_name)
+	uv run python analyses/run_mazes.py --paradigm $(_paradigm_name) $(_seed_args)
+
+maze-quick:
+	uv run python analyses/run_mazes.py --quick --paradigm $(_paradigm_name) $(_seed_args)
 
 cross-maze:
 	uv run python -m nbconvert --to notebook --execute analyses/cross_maze.ipynb \

@@ -1,17 +1,21 @@
 #!/usr/bin/env python
-"""Papermill runner for the per-maze pipeline.
+"""Papermill runner for the per-maze pipeline, swept over seeds.
 
 The ``per_maze.ipynb`` trains one model on every usable mouse in a maze.
-The notebook runs once per maze, injecting ``TARGET_PARADIGM`` and that maze's
-``EXCLUDE_SESSIONS`` into its parameters cell.
+The notebook runs once per (seed, maze), injecting ``TARGET_PARADIGM``, ``SEED``, that maze's
+``EXCLUDE_SESSIONS`` and the output directory into its parameters cell.
 
-Each run renders to ``analyses/artifacts/<Paradigm>/per_maze.ipynb`` and the notebook's save
-cell writes the results bundle to ``analyses/artifacts/<Paradigm>/ALL_MICE/``.
+Each run renders the executed notebook and writes the results bundle to
+``analyses/artifacts/<Paradigm>/ALL_MICE/seed_<SEED>/``. Runs go seed by seed (every maze for
+the first seed, then the next seed), so a partial sweep is already a complete set of mazes.
+A (seed, maze) whose bundle already exists is skipped, so an interrupted sweep resumes where it
+stopped; ``--force`` reruns it. ``--quick`` writes to ``analyses/artifacts/_quick/`` instead, so
+a smoke run never stands in for a real bundle.
 
 Examples:
     uv sync                                                          # installs papermill
-    make maze                                                        # pooled model, all 3 mazes
-    make maze PARADIGM=Y_Maze                                        # pooled model, a single maze
+    make maze                                                        # all 3 mazes, 5 seeds
+    make maze PARADIGM=Y_Maze SEEDS="42 43"                          # one maze, two seeds
     uv run python analyses/run_mazes.py --paradigm More_Water Y_Maze # several mazes, in order
     uv run python analyses/run_mazes.py --quick                      # 2/2-epoch smoke test
 """
@@ -35,6 +39,10 @@ from src.utils.cohort import MERGED  # noqa: E402
 
 TEMPLATE = REPO_ROOT / "analyses" / "per_maze.ipynb"
 ARTIFACTS = REPO_ROOT / "analyses" / "artifacts"
+QUICK_ARTIFACTS = ARTIFACTS / "_quick"
+
+# the seed sweep: every seed runs the whole pipeline
+DEFAULT_SEEDS = [42, 43, 44, 45, 46]
 
 # the three analyzed mazes. A run `make maze` trains all three in order
 DEFAULT_PARADIGMS = ["More_Water", "Y_Maze", "Nested_All"]
@@ -59,23 +67,33 @@ EXCLUDE_SESSIONS: dict[str, list[str]] = {
 }
 
 
-def run_one(paradigm: str, params: dict) -> None:
-    """Execute the template for one maze -> artifacts/<paradigm_slug>/per_maze.ipynb.
+def bundle_dir(root: Path, paradigm: str, seed: int) -> Path:
+    """Where one (maze, seed) run writes its bundle and executed notebook."""
+    return root / paradigm_slug(paradigm) / "ALL_MICE" / f"seed_{seed}"
+
+
+def is_complete(out_dir: Path) -> bool:
+    """A bundle is complete once its last-written file, ``arrays.npz``, exists."""
+    return (out_dir / "metrics.json").exists() and (out_dir / "arrays.npz").exists()
+
+
+def run_one(paradigm: str, out_dir: Path, params: dict) -> None:
+    """Execute the template for one (maze, seed) into ``out_dir``.
 
     ``paradigm`` is a concrete paradigm string ("More_Water"): it is passed straight through
     as ``TARGET_PARADIGM``.
-
-    The output dir is keyed by ``paradigm_slug(paradigm)``. The same name derieved for
-    the notebook's save cell path.
     """
     import papermill as pm
 
-    out_dir = ARTIFACTS / paradigm_slug(paradigm)
     out_dir.mkdir(parents=True, exist_ok=True)
     pm.execute_notebook(
         str(TEMPLATE),
         str(out_dir / "per_maze.ipynb"),
-        parameters={"TARGET_PARADIGM": paradigm, **params},
+        parameters={
+            "TARGET_PARADIGM": paradigm,
+            "ARTIFACT_DIR": str(out_dir),
+            **params,
+        },
         cwd=str(REPO_ROOT),
     )
 
@@ -90,31 +108,62 @@ def main() -> int:
         f"Merged presets: {sorted(MERGED)}",
     )
     ap.add_argument(
+        "--seeds",
+        nargs="*",
+        type=int,
+        default=None,
+        help=f"seeds to sweep; default {DEFAULT_SEEDS} ({DEFAULT_SEEDS[:1]} with --quick)",
+    )
+    ap.add_argument(
         "--quick",
         action="store_true",
-        help="smoke run: 2/2 model epochs and a 5-epoch conformal scale",
+        help="smoke run: 2/2 model epochs and a 5-epoch conformal scale, "
+        "written under analyses/artifacts/_quick/",
+    )
+    ap.add_argument(
+        "--force",
+        action="store_true",
+        help="rerun (seed, maze) pairs whose bundle already exists",
     )
     args = ap.parse_args()
 
+    seeds = args.seeds or (DEFAULT_SEEDS[:1] if args.quick else DEFAULT_SEEDS)
+    root = QUICK_ARTIFACTS if args.quick else ARTIFACTS
     quick: dict = (
         dict(STEP1_EPOCHS=2, STEP2_EPOCHS=2, MLP_EPOCHS=5, MLP_EARLY_STOP_PATIENCE=3)
         if args.quick
         else {}
     )
 
-    failed = []
-    for pg in args.paradigm:
-        print(f"\n=== Maze {pg} ===")
-        try:
-            run_one(pg, {**quick, "EXCLUDE_SESSIONS": EXCLUDE_SESSIONS.get(pg, [])})
-            print(f"  OK -> {ARTIFACTS / paradigm_slug(pg) / 'ALL_MICE'}")
-        except Exception as exc:  # a broken maze must not abort the others
-            print(f"  FAIL: {type(exc).__name__}: {exc}")
-            failed.append(pg)
+    ok, skipped, failed = [], [], []
+    for seed in seeds:
+        for pg in args.paradigm:
+            out_dir = bundle_dir(root, pg, seed)
+            tag = f"{pg} seed {seed}"
+            if is_complete(out_dir) and not args.force:
+                print(f"\n=== {tag}: bundle exists, skipped ({out_dir})")
+                skipped.append(tag)
+                continue
+            print(f"\n=== {tag} ===")
+            try:
+                run_one(
+                    pg,
+                    out_dir,
+                    {
+                        **quick,
+                        "SEED": seed,
+                        "EXCLUDE_SESSIONS": EXCLUDE_SESSIONS.get(pg, []),
+                    },
+                )
+                print(f"  OK -> {out_dir}")
+                ok.append(tag)
+            except Exception as exc:  # a broken run must not abort the others
+                print(f"  FAIL: {type(exc).__name__}: {exc}")
+                failed.append(tag)
 
-    n_ok = len(args.paradigm) - len(failed)
     print(
-        f"\n{n_ok} OK | {len(failed)} failed{': ' + ', '.join(failed) if failed else ''}"
+        f"\n{len(ok)} OK | {len(skipped)} skipped (already done) | {len(failed)} failed"
+        + (f": {', '.join(failed)}" if failed else "")
     )
     return 1 if failed else 0
 
