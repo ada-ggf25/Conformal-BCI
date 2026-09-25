@@ -107,6 +107,8 @@ The paper's LaTeX source is in [`paper/`](paper/README.md).
 ```text
 ML-Decoding/                 # repository root
 ├── Makefile                 # setup, test, documentation, and analysis targets
+├── LICENSE                  # Apache License 2.0
+├── NOTICE                   # copyright notice and what the license does not cover
 ├── pyproject.toml           # Python package metadata and tool dependencies
 ├── uv.lock                  # locked uv environment
 ├── paper/                   # LaTeX source of the paper
@@ -201,6 +203,10 @@ The code used to run the entire analyses is in this repository. A fixed random s
 <!-- TODO: add the BibTeX entry once the paper is available. -->
 
 A citation entry will be added once the paper is published.
+
+## License
+
+The code is released under the [Apache License 2.0](LICENSE), copyright 2026 Liu Lab, Harvard John A. Paulson School of Engineering and Applied Sciences. The license does not cover the neural recordings, the NeurIPS style files in `paper/`, or the photograph of the recording setup; see [`NOTICE`](NOTICE).
 
 ## Acknowledgments
 
