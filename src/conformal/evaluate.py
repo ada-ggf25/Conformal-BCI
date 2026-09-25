@@ -1,7 +1,5 @@
 """Conformal evaluation for the per-maze pipeline.
 
-Original to this project.
-
 This module owns the evaluation math the notebook uses to: pool split
 indices across sessions, compute the sigma-scaled per-region quantile, and
 retrain the scale across a coverage sweep to trace the method's achievable

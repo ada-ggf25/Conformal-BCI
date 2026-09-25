@@ -1,7 +1,5 @@
 """The four per-window uncertainty signals the conformal scale scores on.
 
-Original to this project.
-
 Listed in ``SIGNALS`` column order, which is the order they are persisted in:
 
     entropy         - a function of the softmax decoder predictions

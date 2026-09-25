@@ -1,7 +1,4 @@
-"""Decoder error, scale and set size vs. time since calibration.
-
-Original to this project.
-"""
+"""Decoder error, scale and set size vs. time since calibration."""
 
 from __future__ import annotations
 

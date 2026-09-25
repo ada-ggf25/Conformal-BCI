@@ -1,7 +1,4 @@
-"""Calibration functions: compute the score threshold q_hat from a held-out set.
-
-Original to this project.
-"""
+"""Calibration functions: compute the score threshold q_hat from a held-out set."""
 
 from __future__ import annotations
 

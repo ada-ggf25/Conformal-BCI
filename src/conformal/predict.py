@@ -1,7 +1,4 @@
-"""Prediction-set construction plus the coverage and sharpness metrics that read it.
-
-Original to this project.
-"""
+"""Prediction-set construction plus the coverage and sharpness metrics that read it."""
 
 from __future__ import annotations
 

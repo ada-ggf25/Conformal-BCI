@@ -1,7 +1,5 @@
 """Jacobian strain computation for the AlignmentDecoder alignment map.
 
-Original to this project.
-
 For each latent sequence z_seq = [z_{t-k}, ..., z_t], the alignment strain is:
 
     J_t(z) = d f_align(z_seq) / d z_t     shape: (latent_dim, latent_dim)

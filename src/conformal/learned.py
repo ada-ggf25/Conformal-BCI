@@ -1,7 +1,4 @@
-"""Learned non-linear conformal scale: a small MLP trained by Adam on a conformal loss.
-
-Original to this project.
-"""
+"""Learned non-linear conformal scale: a small MLP trained by Adam on a conformal loss."""
 
 from __future__ import annotations
 
