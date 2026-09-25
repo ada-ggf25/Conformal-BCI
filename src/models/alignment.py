@@ -1,7 +1,5 @@
 """Transformer alignment decoder for cross-session latent alignment.
 
-Adapted from the Liu Lab's cross-session alignment codebase.
-
 Takes a sliding window of seq_len consecutive BC-VAE latents (z_step1) from
 potentially different sessions and produces:
 

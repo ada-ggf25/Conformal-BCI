@@ -1,7 +1,4 @@
-"""Loss functions for Step 1 (BC-VAE) and Step 2 (Transformer alignment) training.
-
-Adapted from the Liu Lab's cross-session alignment codebase.
-"""
+"""Loss functions for Step 1 (BC-VAE) and Step 2 (Transformer alignment) training."""
 
 import torch
 

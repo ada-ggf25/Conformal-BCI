@@ -1,7 +1,4 @@
-"""Decoder evaluation for pooled per-maze runs.
-
-Adapted from the Liu Lab's cross-session alignment codebase.
-"""
+"""Decoder evaluation for pooled per-maze runs."""
 
 from __future__ import annotations
 

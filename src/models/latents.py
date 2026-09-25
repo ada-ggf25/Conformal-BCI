@@ -1,7 +1,4 @@
-"""Latent extraction utilities for Step 1 and Step 2 inference.
-
-Adapted from the Liu Lab's cross-session alignment codebase.
-"""
+"""Latent extraction utilities for Step 1 and Step 2 inference."""
 
 import numpy as np
 import torch

@@ -1,7 +1,4 @@
-"""Hyperparameters for the BC-VAE encoder and Transformer alignment decoder.
-
-Adapted from the Liu Lab's cross-session alignment codebase.
-"""
+"""Hyperparameters for the BC-VAE encoder and Transformer alignment decoder."""
 
 # Model dimensions
 LATENT_DIM = 16

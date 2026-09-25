@@ -1,7 +1,4 @@
-"""Training loops for Step 1 (BC-VAE encoder) and Step 2 (Transformer alignment decoder).
-
-Adapted from the Liu Lab's cross-session alignment codebase.
-"""
+"""Training loops for Step 1 (BC-VAE encoder) and Step 2 (Transformer alignment decoder)."""
 
 import copy
 from collections.abc import Callable

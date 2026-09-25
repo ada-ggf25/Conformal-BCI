@@ -1,7 +1,4 @@
-"""BC-VAE encoder model for cross-session neural population embedding.
-
-Adapted from the Liu Lab's cross-session alignment codebase.
-"""
+"""BC-VAE encoder model for cross-session neural population embedding."""
 
 import torch
 import torch.nn as nn
