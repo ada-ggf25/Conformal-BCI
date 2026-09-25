@@ -1,7 +1,4 @@
-"""Typed readers for the pooled per-maze ``metrics.json`` contract.
-
-Original to this project.
-"""
+"""Typed readers for the pooled per-maze ``metrics.json`` contract."""
 
 from __future__ import annotations
 

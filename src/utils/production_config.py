@@ -1,9 +1,4 @@
-"""The pooled per-maze pipeline's tuned-and-frozen production recipe.
-
-Adapted from the Liu Lab's cross-session alignment codebase: ``Step 1: BC-VAE encoder``,
-``Step 2: alignment decoder`` and ``windowing and labels`` follow the lab's implementations.
-Original to this project: ``conformal learned scale sigma(x)``.
-"""
+"""The pooled per-maze pipeline's tuned-and-frozen production recipe."""
 
 # Step 1: BC-VAE encoder
 STEP1_REGION_WEIGHT = 0.2

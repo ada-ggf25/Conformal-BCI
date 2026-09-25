@@ -1,7 +1,4 @@
-"""Session discovery and grouping utilities.
-
-Adapted from the Liu Lab's cross-session alignment codebase.
-"""
+"""Session discovery and grouping utilities."""
 
 import re
 

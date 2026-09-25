@@ -1,7 +1,4 @@
-"""Filesystem layout and write side of the pooled per-maze analysis bundles.
-
-Adapted from the Liu Lab's cross-session alignment codebase.
-"""
+"""Filesystem layout and write side of the pooled per-maze analysis bundles."""
 
 from __future__ import annotations
 

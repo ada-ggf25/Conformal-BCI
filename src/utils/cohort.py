@@ -1,7 +1,4 @@
-"""Pooled-cohort discovery for the per-maze pipeline.
-
-Adapted from the Liu Lab's cross-session alignment codebase.
-"""
+"""Pooled-cohort discovery for the per-maze pipeline."""
 
 from __future__ import annotations
 

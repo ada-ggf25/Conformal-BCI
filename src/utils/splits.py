@@ -1,7 +1,4 @@
-"""Train/validation/test splitting utilities.
-
-Adapted from the Liu Lab's cross-session alignment codebase.
-"""
+"""Train/validation/test splitting utilities."""
 
 from __future__ import annotations
 

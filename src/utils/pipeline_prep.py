@@ -1,7 +1,4 @@
-"""Session data assembly and class-count utilities.
-
-Adapted from the Liu Lab's cross-session alignment codebase.
-"""
+"""Session data assembly and class-count utilities."""
 
 from __future__ import annotations
 
