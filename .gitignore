@@ -1,0 +1,29 @@
+# Python
+.pytest_cache/
+__pycache__/
+.mypy_cache/
+
+# Virtual environment
+.venv/
+
+# Local credentials
+.env
+
+# MkDocs build output
+site/
+
+# Ruff cache
+.ruff_cache/
+
+**CLAUDE.md
+**AGENTS.md
+
+# submodules
+.gitmodules
+Vault-ML-Decoding/
+# Generated analysis outputs (heavy, regenerable) and old local run snapshots
+analyses/artifacts/
+analyses/checkpoints/
+
+# LaTeX build output
+paper/build/

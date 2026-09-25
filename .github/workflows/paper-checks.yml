@@ -1,0 +1,53 @@
+name: paper-checks
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'paper/**'
+      - 'tests/paper/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/paper-checks.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  paper-checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync Python dependencies
+        run: uv sync
+
+      - name: Install TeX Live, TeX Count and aspell dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            aspell \
+            aspell-en \
+            cm-super \
+            latexmk \
+            lmodern \
+            texlive-bibtex-extra \
+            texlive-extra-utils \
+            texlive-fonts-recommended \
+            texlive-latex-base \
+            texlive-latex-extra \
+            texlive-latex-recommended \
+            texlive-pictures \
+            texlive-science
+
+      - name: Run paper checks (latex, limits, spelling)
+        run: make paper-test

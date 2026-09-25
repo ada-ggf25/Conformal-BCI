@@ -1,0 +1,5 @@
+# Saved heavy results bundles per maze run: models + metrics.json + arrays.npz + duplicated notebooks
+artifacts/
+
+# Notebooks versions and runs checkpoints
+checkpoints/
