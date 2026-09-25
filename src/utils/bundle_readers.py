@@ -8,8 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from ..conformal.trajectory import calibration_distance_trajectory, trajectory_summary
-from ..data.config import BIN_WIDTH_SEC, WINDOW_SIZE
+from ..conformal.error_correlation import error_correlations
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -162,39 +161,28 @@ def maze_summary_table(mazes: dict, order: Sequence[str]) -> list[dict[str, Any]
     return rows
 
 
-def trajectory_summary_for_bundle(
-    bundle: dict,
-    *,
-    bin_width_sec: float = 20.0,
-    min_sessions: int = 3,
-) -> dict[str, float] | None:
-    """``trajectory_summary`` computed directly from a pooled bundle's saved arrays.
+def error_correlations_for_bundle(bundle: dict) -> dict | None:
+    """``error_correlations`` over a pooled bundle's saved test windows.
 
     Reads ``_arrays_path``, which ``load_maze_bundles`` injects below.
 
     Returns:
-        The ``trajectory_summary`` dict, or ``None`` if the bundle has no arrays, no
+        The ``error_correlations`` dict, or ``None`` if the bundle has no arrays, no
         finite per-region thresholds, or no recorded class count.
     """
     arr_path = bundle.get("_arrays_path")
     qhats = class_conditional_thresholds(bundle)
-    n_classes = bundle.get("n_classes")
-    if arr_path is None or not qhats or not n_classes:
+    if arr_path is None or not qhats or not bundle.get("n_classes"):
         return None
 
     arrs = np.load(arr_path)
     test_mask = arrs["win_split"] == 2
-    traj = calibration_distance_trajectory(
+    return error_correlations(
         arrs["win_probs"][test_mask],
         arrs["win_sigma"][test_mask],
         arrs["win_region"][test_mask],
-        arrs["win_session_idx"][test_mask],
         qhats,
-        bin_width_sec=bin_width_sec,
-        seconds_per_window=WINDOW_SIZE * BIN_WIDTH_SEC,
-        min_sessions=min_sessions,
     )
-    return trajectory_summary(traj)
 
 
 def load_maze_bundles(
