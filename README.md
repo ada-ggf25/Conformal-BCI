@@ -156,9 +156,10 @@ The main workflow is per-maze. `analyses/per_maze.ipynb` pools every usable mous
 After the per-maze bundles exist, `analyses/cross_maze.ipynb` reads them back and produces the cross-maze comparison tables and figures.
 
 ```bash
-make maze                         # run all analyzed mazes: More_Water, Y_Maze, Nested_All
-make maze PARADIGM=Y_Maze         # run one maze
-make cross-maze                   # compare saved per-maze bundles
+make maze-quick                   # 2-epoch smoke test of the whole pipeline, one seed
+make maze                         # all analyzed mazes (More_Water, Y_Maze, Nested_All) x seeds 42-46
+make maze PARADIGM=Y_Maze SEEDS=42  # one maze, one seed
+make cross-maze                   # compare saved bundles, mean ± sd across seeds
 ```
 
 Expected generated outputs:
