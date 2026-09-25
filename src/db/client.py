@@ -1,7 +1,4 @@
-"""MongoDB client singleton for the Atlas functional dataset.
-
-Adapted from the Liu Lab's cross-session alignment codebase.
-"""
+"""MongoDB client singleton for the Atlas functional dataset."""
 
 from __future__ import annotations
 

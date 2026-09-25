@@ -1,7 +1,4 @@
-"""Raw data loaders for the functional_atlas GridFS collections.
-
-Adapted from the Liu Lab's cross-session alignment codebase.
-"""
+"""Raw data loaders for the functional_atlas GridFS collections."""
 
 from __future__ import annotations
 

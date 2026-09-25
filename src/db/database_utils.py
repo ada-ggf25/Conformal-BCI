@@ -1,7 +1,5 @@
 """MongoDB session lookup utilities.
 
-Adapted from the Liu Lab's cross-session alignment codebase.
-
 Session names follow the convention M<mouse_id>_<YYMMDD> (e.g. "M21_250214").
 """
 
