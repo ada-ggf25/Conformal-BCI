@@ -8,6 +8,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from .config import (
+    KL_WARMUP_EPOCHS,
     KL_WEIGHT,
     MAIN_EARLY_STOP_MIN_DELTA,
     MAIN_EARLY_STOP_PATIENCE,
@@ -95,12 +96,17 @@ def train_step1[M: nn.Module](
     class_weight_power: float = 1.0,
     kl_weight: float = KL_WEIGHT,
     kl_free_bits: float = 0.0,
+    kl_warmup_epochs: int = KL_WARMUP_EPOCHS,
     log_every: int = 50,
 ) -> tuple[M, dict]:
     """Train the BC-VAE encoder (Step 1).
 
     Loss = RECON_WEIGHT * Poisson_NLL + region_weight * CrossEntropy + kl_w * KL,
-    where ``kl_w`` ramps ``kl_weight`` linearly over the first 10 epochs.
+    where ``kl_w`` ramps ``kl_weight`` linearly over the first ``kl_warmup_epochs`` epochs.
+
+    Early stopping ignores the warm-up: the validation loss carries the same ramping KL weight,
+    so a warm-up epoch looks better only because its KL term is under-weighted. No checkpoint
+    is taken and no patience is spent until ``kl_w`` reaches ``kl_weight``.
 
     Args:
         model:          SharedTemporalClassifier
@@ -120,12 +126,15 @@ def train_step1[M: nn.Module](
         class_weight_power: exponent applied to inverse-frequency class weights.
         kl_weight:      weight on the KL term.
         kl_free_bits:   per-dimension KL floor in nats (0.0 = off).
+        kl_warmup_epochs: length of the linear KL ramp, also the first epoch early
+                        stopping may select (0 = no ramp).
         log_every:      print a progress line every this many epochs (default 50)
 
     Returns:
         (model, history_dict) where history_dict contains per-epoch lists:
         epoch, loss, recon, region, kl, kl_weight, acc, val_loss, val_recon,
-        val_region and val_kl.
+        val_region and val_kl, plus ``best_epoch``: the 1-based epoch whose weights
+        were restored, or None when none were.
     """
     optimizer = torch.optim.AdamW(
         _step1_param_groups(model, weight_decay, classifier_weight_decay), lr=lr
@@ -143,10 +152,12 @@ def train_step1[M: nn.Module](
     hist: dict = {}
     best_val = float("inf")
     best_state: dict | None = None
+    best_epoch: int | None = None
     stall = 0
 
     for epoch in range(num_epochs):
-        kl_w = kl_weight * min(1.0, (epoch + 1) / 10.0)  # linear warm-up over 10 epochs
+        warmed_up = epoch + 1 >= kl_warmup_epochs
+        kl_w = kl_weight if warmed_up else kl_weight * (epoch + 1) / kl_warmup_epochs
         model.train()
         total_loss = total_recon = total_region = total_kl = 0.0
         correct = total = n_batches = 0
@@ -266,10 +277,11 @@ def train_step1[M: nn.Module](
                 + (f"  val={val_loss:.4f}" if val_loss is not None else "")
             )
 
-        if val_loss is not None:
+        if val_loss is not None and warmed_up:
             if val_loss < best_val - es_delta:
                 best_val = val_loss
                 best_state = copy.deepcopy(model.state_dict())
+                best_epoch = epoch + 1
                 stall = 0
             else:
                 stall += 1
@@ -280,7 +292,11 @@ def train_step1[M: nn.Module](
     # Restore the weights that minimized val_loss (best-checkpoint early stopping).
     if best_state is not None:
         model.load_state_dict(best_state)
-        log_fn(f"      [Step1] restored best-val weights (val_loss={best_val:.4f})")
+        log_fn(
+            f"      [Step1] restored best-val weights from epoch {best_epoch} "
+            f"(val_loss={best_val:.4f})"
+        )
+    hist["best_epoch"] = best_epoch
 
     return model, hist
 

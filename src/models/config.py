@@ -21,6 +21,10 @@ KL_WEIGHT = 0.1
 """KL divergence weight. A ``train_step1`` fallback only: the pooled pipeline passes
 ``STEP1_KL_WEIGHT`` from ``utils/production_config.py``."""
 
+KL_WARMUP_EPOCHS = 10
+"""Epochs over which the KL weight ramps linearly to its ceiling. Early stopping only starts
+once the ramp is done, since validation losses under a changing KL weight are not comparable."""
+
 REGION_WEIGHT = 1.0
 """Region classification CrossEntropy weight. A ``train_step1`` fallback only: the
 pooled pipeline passes ``STEP1_REGION_WEIGHT`` from ``utils/production_config.py``."""
