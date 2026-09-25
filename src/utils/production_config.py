@@ -48,3 +48,7 @@ MLP_KAPPA = 20.0
 
 MLP_SIZE_WEIGHT = 1.0
 """Weight on the sharpness term relative to the coverage term."""
+
+MLP_CAL_SPLIT = "chronological"
+"""How each training batch is halved into quantile and scored rows (``"random"`` or
+``"chronological"``, earlier half of each session's rows vs later half)."""

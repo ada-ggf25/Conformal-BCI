@@ -44,20 +44,6 @@ def pool_indices(
     )
 
 
-def block_layout(
-    session_data: dict,
-    valid_sessions: list[str],
-    index_key: str,
-) -> np.ndarray:
-    """Per-window session index for one split block."""
-    sess = []
-    for si, s in enumerate(valid_sessions):
-        n = len(session_data[s][index_key])
-        if n:
-            sess.append(np.full(n, si))
-    return np.concatenate(sess)
-
-
 def class_conditional_q_scaled(
     probs: np.ndarray,
     labels: np.ndarray,
@@ -96,6 +82,8 @@ def retrain_coverage_sweep(
     seed: int,
     device: str = "cpu",
     size_weight: float = 1.0,
+    split: str = "random",
+    groups: np.ndarray | None = None,
 ) -> list[dict]:
     """Coverage-sharpness curve where the scale is retrained at each target.
 
@@ -109,6 +97,8 @@ def retrain_coverage_sweep(
         n_classes: total number of regions.
         targets:   coverage targets, e.g. ``[0.80, 0.90]``. Not alphas. each is
                    converted internally as ``alpha = 1 - target``.
+        split:     the in-batch cal/ev split passed to ``train_scale``.
+        groups:    (n,) session id per pooled window, needed by the chronological split.
 
     Returns:
         One row per target, in ``targets`` order, ``{target, coverage, size}``.
@@ -135,6 +125,9 @@ def retrain_coverage_sweep(
             val_labels=labels[val_i],
             early_stop_patience=early_stop_patience,
             n_classes=n_classes,
+            split=split,
+            groups=None if groups is None else groups[fit_i],
+            val_groups=None if groups is None else groups[val_i],
             seed=seed,
             device=device,
         )

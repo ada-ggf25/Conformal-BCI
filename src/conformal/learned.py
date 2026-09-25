@@ -93,6 +93,43 @@ def _class_conditional_soft_quantiles(
     return q
 
 
+def _chronological_halves(groups: Tensor, times: Tensor) -> tuple[Tensor, Tensor]:
+    """Split rows into an earlier (cal) and a later (ev) half within each group.
+
+    Rows are ordered by ``times`` inside each group. The first ``m // 2`` of a group's ``m`` rows
+    go to cal, the rest to ev, so a group with a single row contributes to ev only.
+    """
+    o = torch.argsort(times, stable=True)
+    o = o[torch.argsort(groups[o], stable=True)]
+    _, counts = torch.unique_consecutive(groups[o], return_counts=True)
+    starts = torch.repeat_interleave(torch.cumsum(counts, 0) - counts, counts)
+    rank = torch.arange(len(o), device=o.device) - starts
+    is_cal = rank < torch.repeat_interleave(counts // 2, counts)
+    return o[is_cal], o[~is_cal]
+
+
+def _in_batch_halves(
+    n: int,
+    split: str,
+    gen: torch.Generator,
+    groups: Tensor | None,
+    times: Tensor | None,
+) -> tuple[Tensor, Tensor]:
+    """(cal_i, ev_i) for one batch of ``n`` rows.
+
+    ``random`` halves a random permutation. ``chronological`` puts each group's earlier half in
+    cal and its later half in ev, so the quantile always comes from the past of the windows it is
+    scored on, as it does at deployment.
+    """
+    if split == "chronological":
+        if groups is None or times is None:
+            raise ValueError("the chronological split needs per-row groups and times")
+        return _chronological_halves(groups, times)
+    perm = torch.randperm(n, generator=gen, device=gen.device)
+    half = n // 2
+    return perm[:half], perm[half:]
+
+
 def _conformal_loss_class_conditional(
     net: ScaleNet,
     signals: Tensor,
@@ -102,7 +139,8 @@ def _conformal_loss_class_conditional(
     alpha: float,
     tau: float,
     kappa: float,
-    gen: torch.Generator,
+    cal_i: Tensor,
+    ev_i: Tensor,
     size_weight: float = 1.0,
 ) -> tuple[Tensor, float, float]:
     """Conformal loss with per-region soft quantiles over a single shared scale.
@@ -110,13 +148,9 @@ def _conformal_loss_class_conditional(
     Each class is thresholded by its own region's soft quantile. The coverage shortfall is a mean
     over present regions. The scale is a single shared network, so gradients from every region's
     coverage term update the same weights: a per-region objective with pooled parameters. In-batch
-    split trick: quantiles from one half, coverage/size on the other.
+    split trick: quantiles from the ``cal_i`` rows, coverage/size on the ``ev_i`` rows.
     """
     n = signals.shape[0]
-    perm = torch.randperm(n, generator=gen, device=signals.device)
-    half = n // 2
-    cal_i, ev_i = perm[:half], perm[half:]
-
     scale = net(signals)  # (n,) shared
     ar = torch.arange(n, device=probs.device)
     s_all = (1.0 - probs) / scale.unsqueeze(1)  # (n, K)
@@ -160,6 +194,9 @@ def train_scale(
     val_labels: np.ndarray | None = None,
     early_stop_patience: int | None = None,
     n_classes: int | None = None,
+    split: str = "random",
+    groups: np.ndarray | None = None,
+    val_groups: np.ndarray | None = None,
     seed: int = 0,
     device: str = "cpu",
 ) -> tuple[ScaleNet, TrainReport]:
@@ -179,6 +216,12 @@ def train_scale(
         early_stop_patience: epochs without held-out improvement before stopping early.
         n_classes:   region count for the class-conditional loss, defaults to
                      ``probs.shape[1]``.
+        split:       how each batch is halved into the quantile (cal) and scored (ev) rows.
+                     ``"random"`` halves a random permutation. ``"chronological"`` puts the
+                     earlier half of each group's rows in cal and the later half in ev.
+        groups:      (n,) group id per fitting row (the session), needed by the chronological
+                     split. Rows must be in chronological order within each group.
+        val_groups:  the same for the early-stopping rows.
 
     Returns:
         (net, report). ``report.collapsed_to_standard`` is True when the net never left σ = 1,
@@ -192,6 +235,17 @@ def train_scale(
         )
     if len(labels) < 32:
         raise ValueError(f"need >= 32 fitting windows, got {len(labels)}")
+    if split not in ("random", "chronological"):
+        raise ValueError(f"split must be 'random' or 'chronological', got {split!r}")
+    if split == "chronological" and (
+        groups is None
+        or len(groups) != len(labels)
+        or (val_signals_z is not None and val_groups is None)
+    ):
+        raise ValueError(
+            "the chronological split needs groups for every fitting row "
+            "(and val_groups when early stopping)"
+        )
 
     torch.manual_seed(seed)
     gen = torch.Generator(device=device).manual_seed(seed)
@@ -205,12 +259,23 @@ def train_scale(
     opt = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=weight_decay)
 
     n_cls = n_classes if n_classes is not None else int(P.shape[1])
+    G = None if groups is None else torch.as_tensor(np.asarray(groups), device=dev)
 
-    def _batch_loss(
-        sig_b: Tensor, prob_b: Tensor, lab_b: Tensor
+    def _loss(
+        sig_b: Tensor, prob_b: Tensor, lab_b: Tensor, cal_i: Tensor, ev_i: Tensor
     ) -> tuple[Tensor, float, float]:
         return _conformal_loss_class_conditional(
-            net, sig_b, prob_b, lab_b, n_cls, alpha, tau, kappa, gen, size_weight
+            net,
+            sig_b,
+            prob_b,
+            lab_b,
+            n_cls,
+            alpha,
+            tau,
+            kappa,
+            cal_i,
+            ev_i,
+            size_weight,
         )
 
     # optional held-out early-stopping block
@@ -221,6 +286,20 @@ def train_scale(
         vX = torch.as_tensor(np.asarray(val_signals_z), dtype=torch.float32, device=dev)
         vP = torch.as_tensor(np.asarray(val_probs), dtype=torch.float32, device=dev)
         vY = torch.as_tensor(np.asarray(val_labels), dtype=torch.long, device=dev)
+        # One fixed cal/ev split of the held-out block, drawn once, so the early-stopping loss
+        # compares epochs on the same rows and does not advance the training generator.
+        vG = (
+            None
+            if val_groups is None
+            else torch.as_tensor(np.asarray(val_groups), device=dev)
+        )
+        v_cal, v_ev = _in_batch_halves(
+            len(vY),
+            split,
+            torch.Generator(device=device).manual_seed(seed + 1),
+            vG,
+            torch.arange(len(vY), device=dev),
+        )
     patience = epochs if early_stop_patience is None else int(early_stop_patience)
 
     n = len(Y)
@@ -237,7 +316,10 @@ def train_scale(
         nb = 0
         for lo in range(0, n - bs + 1, bs):
             idx = perm[lo : lo + bs]
-            loss, sz, cv = _batch_loss(X[idx], P[idx], Y[idx])
+            cal_i, ev_i = _in_batch_halves(
+                len(idx), split, gen, None if G is None else G[idx], idx
+            )
+            loss, sz, cv = _loss(X[idx], P[idx], Y[idx], cal_i, ev_i)
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
@@ -252,7 +334,7 @@ def train_scale(
 
         if use_es:
             with torch.no_grad():
-                es_loss = float(_batch_loss(vX, vP, vY)[0])
+                es_loss = float(_loss(vX, vP, vY, v_cal, v_ev)[0])
             hist_es.append(es_loss)
             if es_loss < best_es:
                 best_es, best_epoch, since_best = es_loss, ep, 0
@@ -320,11 +402,14 @@ def signal_sensitivity(
     signal_mean: np.ndarray,
     signal_std: np.ndarray,
 ) -> np.ndarray:
-    """Per-window d(sigma) / d(standardized signal), for each of the net's inputs.
+    """Per-window d(log sigma) / d(standardized signal), for each of the net's inputs.
+
+    The relative change in sigma per standard deviation of a signal. Taking the log makes it
+    independent of sigma's overall level, which carries no meaning (q_hat rescales with it), so
+    values are comparable across mazes.
 
     Standardizes ``signals_raw`` (n, n_signals) with the net's own training mean/std, runs one
-    forward pass, and backpropagates ``sigma.sum()`` to get sigma's gradient with respect to
-    each input.
+    forward pass, and backpropagates ``log(sigma).sum()`` to each input.
 
     Returns:
         (n, n_signals) gradients, one row per window.
@@ -332,8 +417,7 @@ def signal_sensitivity(
     net.eval()
     z = (np.asarray(signals_raw, dtype=float) - signal_mean) / signal_std
     z_t = torch.tensor(z, dtype=torch.float32, requires_grad=True)
-    sigma = net(z_t)
-    sigma.sum().backward()
+    torch.log(net(z_t)).sum().backward()
     return z_t.grad.detach().numpy()
 
 
@@ -341,7 +425,7 @@ def signal_sensitivity_for_bundle(bundle: dict) -> dict[str, Any] | None:
     """Mean absolute ``signal_sensitivity``, computed from a pooled bundle's saved files.
 
     Returns:
-        ``{"signals": [...], "mean_abs_grad": array of shape (n_signals,)}``, or ``None`` if the
+        ``{"signals": [...], "mean_abs_log_grad": array of shape (n_signals,)}``, or ``None`` if the
         bundle has no saved scale net or no saved arrays.
     """
     sn_path, arr_path = bundle.get("_scale_net_path"), bundle.get("_arrays_path")
@@ -354,4 +438,4 @@ def signal_sensitivity_for_bundle(bundle: dict) -> dict[str, Any] | None:
     test_mask = arrs["win_split"] == 2
     raw = np.stack([arrs[f"win_{s}"][test_mask] for s in signal_names], axis=1)
     grad = signal_sensitivity(net, raw, sig_mean, sig_std)
-    return {"signals": signal_names, "mean_abs_grad": np.abs(grad).mean(axis=0)}
+    return {"signals": signal_names, "mean_abs_log_grad": np.abs(grad).mean(axis=0)}
