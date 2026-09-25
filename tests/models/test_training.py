@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from src.models.alignment import AlignmentDecoder
-from src.models.config import RECON_WEIGHT
+from src.models.config import KL_WEIGHT, RECON_WEIGHT
 from src.models.encoder import SharedTemporalClassifier
 from src.models.training import train_step1, train_step2
 
@@ -87,6 +87,43 @@ def test_total_loss_is_the_documented_weighted_sum():
         + hist["kl_weight"][0] * hist["kl"][0]
     )
     assert hist["loss"][0] == pytest.approx(expected, rel=1e-5)
+
+
+def _run_step1_with_val(num_epochs, warmup):
+    """Train Step 1 with a val loader whose first eligible epoch is always the best."""
+    logs: list[str] = []
+    torch.manual_seed(0)
+    _, hist = train_step1(
+        _encoder(),
+        [_step1_batch()],
+        _DEVICE,
+        logs.append,
+        _NC,
+        num_epochs=num_epochs,
+        lr=1e-3,
+        val_loader=[_step1_batch()],
+        early_stop_patience=1,
+        early_stop_min_delta=1e10,  # only the first candidate epoch can "improve"
+        kl_warmup_epochs=warmup,
+    )
+    return hist, logs
+
+
+def test_step1_early_stopping_skips_the_kl_warmup():
+    """No warm-up epoch is selected or spends patience, so the first candidate is the ramp's end."""
+    hist, _ = _run_step1_with_val(num_epochs=10, warmup=3)
+    assert hist["kl_weight"] == pytest.approx(
+        [KL_WEIGHT / 3, 2 * KL_WEIGHT / 3, KL_WEIGHT, KL_WEIGHT]
+    )
+    assert hist["best_epoch"] == 3
+    assert len(hist["loss"]) == 4  # epoch 3 selected, epoch 4 exhausts patience 1
+
+
+def test_step1_without_a_finished_warmup_restores_nothing():
+    """A run shorter than the warm-up keeps its final weights and reports no best epoch."""
+    hist, logs = _run_step1_with_val(num_epochs=2, warmup=5)
+    assert hist["best_epoch"] is None
+    assert not any("restored best-val weights" in m for m in logs)
 
 
 def test_train_step2_restores_best_val_weights():

@@ -45,7 +45,7 @@
 \maketitle
 
 \begin{abstract}
-A major challenge for the lasting reliability of brain-computer interfaces in real world conditions is neural drift, which degrades decoder performance and makes them unreliable over time. To evaluate the decline in accuracy, it's necessary to have recent labeled data, which is expensive and impractical in real life settings. This paper studies a learned class-conditional split-conformal layer to measure uncertainty in neural decoding models, without requiring new labeled data. A behavior-constrained variational autoencoder and a Transformer alignment decoder predict the maze region occupied by a mouse, then the conformal layer outputs a trust region of plausible maze regions. The approach was tested using electrophysiological data from flexible brain probes in 13 mice as they went through 3 virtual-reality mazes. For a targeted 90\% trust region accuracy, the method achieved 81.4\% to 86.5\% test accuracy when constructing trust regions that included the true maze region. While the trust region size positively correlated with decoder error. These results show that the proposed model gives a signal for decoding uncertainty, which is promising for long-term reliability in brain-computer interfaces. Nevertheless, a more thorough comparison with different methods and additional decoding models is necessary before broad implementation.
+A major challenge for the lasting reliability of brain-computer interfaces in real world conditions is neural drift, which degrades decoder performance and makes them unreliable over time. To evaluate the decline in accuracy, it's necessary to have recent labeled data, which is expensive and impractical in real life settings. This paper studies a learned class-conditional split-conformal layer to measure uncertainty in neural decoding models, without requiring new labeled data. A behavior-constrained variational autoencoder and a Transformer alignment decoder predict the maze region occupied by a mouse, then the conformal layer outputs a trust region of plausible maze regions. The approach was tested using electrophysiological data from flexible brain probes in 13 mice as they went through 3 virtual-reality mazes. For a targeted 90\% trust region accuracy, the method achieved 81.4\% to 86.5\% test accuracy when constructing trust regions that included the true maze region. The trust region size correlated positively with decoder error in two of the three mazes and negatively in the third. These results show that the proposed model gives a signal for decoding uncertainty, which is promising for long-term reliability in brain-computer interfaces. Nevertheless, a more thorough comparison with different methods and additional decoding models is necessary before broad implementation.
 \end{abstract}
 
 \section{Introduction}
@@ -372,12 +372,12 @@ The results per region show that test coverage differs across maze regions and s
 \end{figure}
 
 \subsection{Decoder error correlations}
-Table~\ref{tab:within-chunk} reports the Pearson correlation of test decoder error with the normalized trust region size and the learned uncertainty scale $\sigma_\theta(x)$. Positive correlations indicate that the conformal layer produces a higher $\sigma_\theta(x)$ and creates larger trust regions when the decoder error gets bigger.
+Table~\ref{tab:within-chunk} reports the Pearson correlation of test decoder error with the normalized trust region size and the learned uncertainty scale $\sigma_\theta(x)$. Decoder error is 0 or 1 for a single data point, so test data points are first grouped, as described in the caption, and each group contributes its error rate. Positive correlations indicate that the conformal layer produces a higher $\sigma_\theta(x)$ and creates larger trust regions where the decoder errs more often.
 
-All 3 mazes show positive correlations. The strongest relationship appears in the Linear Maze, where the correlation reaches 0.88 for trust region size and 0.89 for the learned scale. The Y and Loop Mazes show still good, but weaker correlations.
+The Linear Maze shows strong positive correlations, 0.86 for trust region size and 0.99 for the learned scale. The Y Maze shows weaker positive correlations. In the Loop Maze both correlations are negative: the decoder errs more often where the trust regions are smaller, so there the conformal layer does not track decoder error.
 
 \begin{table}[t]
-  \caption{Decoder error Pearson correlations. The first correlation uses the mean normalized trust region size $|\widehat{\mathcal{C}}|/K$. The second uses the MLP uncertainty scale $\sigma_\theta(x)$. Positive values indicate that decoder errors tend to coincide with larger trust regions or larger MLP scales.}
+  \caption{Decoder error Pearson correlations over grouped test data points. The first correlation groups by normalized trust region size $|\widehat{\mathcal{C}}|/K$, one group per size level. The second groups by the MLP uncertainty scale $\sigma_\theta(x)$, in 10 equal-count bins. Each group contributes its error rate and is weighted by its number of data points. Positive values indicate that decoder errors tend to coincide with larger trust regions or larger MLP scales.}
   \label{tab:within-chunk}
   \centering\footnotesize
   \begin{tabular}{@{}l c c@{}}
@@ -386,9 +386,9 @@ All 3 mazes show positive correlations. The strongest relationship appears in th
     & corr(decoder error, $|\widehat{\mathcal{C}}|/K$)
     & corr(decoder error, $\sigma_\theta(x)$) \\
     \midrule
-    Linear Maze & $+0.88$ & $+0.89$ \\
-    Y Maze       & $+0.28$ & $+0.73$ \\
-    Loop Maze    & $+0.56$ & $+0.34$ \\
+    Linear Maze & $+0.86$ & $+0.99$ \\
+    Y Maze       & $+0.61$ & $+0.68$ \\
+    Loop Maze    & $-0.78$ & $-0.86$ \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -401,7 +401,7 @@ However, the remaining signals also show comparable sensitivity, suggesting that
 \begin{figure}[t]
   \centering
   \includegraphics[width=0.7\linewidth]{signal-confound.png}
-  \caption{Sensitivity of the learned conformal scale to each uncertainty signal. Bars show the mean variation of $\sigma_\theta(x)$ with respect to each input uncertainty signal, averaged over the test set for each maze. Larger values indicate that local changes in that signal produce larger changes in the MLP output.}
+  \caption{Sensitivity of the learned conformal scale to each uncertainty signal. Bars show the mean relative change of $\sigma_\theta(x)$, $|\partial \log \sigma_\theta(x) / \partial z|$, per standard deviation $z$ of each input uncertainty signal, averaged over the test set for each maze. The relative change does not depend on the overall level of $\sigma_\theta(x)$, so the mazes can be compared directly.}
   \label{fig:signal-confound}
 \end{figure}
 
@@ -416,7 +416,7 @@ The test coverage spread across sessions indicates that the drift tax is not uni
 \subsection{Decoder performance}
 The results show that decoder performance directly translates to conformal layer performance. The Linear Maze has the highest decoder accuracy, producing the sharpest trust regions and the lowest coverage and sharpness curve. Whereas the Y and Loop Mazes have lower decoder accuracy and require broader trust regions to maintain coverage. This is consistent with the intended role of the conformal layer, as it's not designed to correct decoder errors, but to express lower confidence by returning wider trust regions.
 
-When the encoding-decoding pipeline uncertainty signals indicate high distrust, the conformal layer has no other option but to create wider trust regions to avoid sacrificing coverage. Therefore, the decoder accuracy limits how sharp the trust regions can be. The different results in trust region sharpness across mazes, along with the decoder error's positive correlations with trust region size and the MLP output, support the interpretation that the conformal layer serves as a warning signal for decoder error.
+When the encoding-decoding pipeline uncertainty signals indicate high distrust, the conformal layer has no other option but to create wider trust regions to avoid sacrificing coverage. Therefore, the decoder accuracy limits how sharp the trust regions can be. The different results in trust region sharpness across mazes, along with the positive correlations of decoder error with trust region size and the MLP output in the Linear and Y Mazes, support the interpretation that the conformal layer tracks decoder uncertainty in those mazes. In the Loop Maze the correlations are negative, so there the conformal layer does not track decoder error.
 
 \subsection{Classes imbalance}
 The analysis per region in Figure~\ref{fig:per-region} shows why a class-conditional conformal method is important for imbalanced datasets. The data used in this paper has a highly imbalanced label distribution. Not using a class-conditional approach would mean using a single conformal threshold, so conformal scores would not be stored per maze region. In this case, a single threshold would set the rule for the entire maze, determining which regions to include in the trust region.

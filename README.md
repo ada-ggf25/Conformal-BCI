@@ -2,7 +2,7 @@
 
 <div align="justify">
 
-A major challenge for the lasting reliability of brain-computer interfaces in real world conditions is neural drift, which degrades decoder performance and makes them unreliable over time. To evaluate the decline in accuracy, it's necessary to have recent labeled data, which is expensive and impractical in real life settings. This paper studies a learned class-conditional split-conformal layer to measure uncertainty in neural decoding models, without requiring new labeled data. A behavior-constrained variational autoencoder and a Transformer alignment decoder predict the maze region occupied by a mouse, then the conformal layer outputs a trust region of plausible maze regions. The approach was tested using electrophysiological data from flexible brain probes in 13 mice as they went through 3 virtual-reality mazes. For a targeted 90\% trust region accuracy, the method achieved 81.4\% to 86.5\% test accuracy when constructing trust regions that included the true maze region. While the trust region size positively correlated with decoder error. These results show that the proposed model gives a signal for decoding uncertainty, which is promising for long-term reliability in brain-computer interfaces. Nevertheless, a more thorough comparison with different methods and additional decoding models is necessary before broad implementation.
+A major challenge for the lasting reliability of brain-computer interfaces in real world conditions is neural drift, which degrades decoder performance and makes them unreliable over time. To evaluate the decline in accuracy, it's necessary to have recent labeled data, which is expensive and impractical in real life settings. This paper studies a learned class-conditional split-conformal layer to measure uncertainty in neural decoding models, without requiring new labeled data. A behavior-constrained variational autoencoder and a Transformer alignment decoder predict the maze region occupied by a mouse, then the conformal layer outputs a trust region of plausible maze regions. The approach was tested using electrophysiological data from flexible brain probes in 13 mice as they went through 3 virtual-reality mazes. For a targeted 90\% trust region accuracy, the method achieved 81.4\% to 86.5\% test accuracy when constructing trust regions that included the true maze region. The trust region size correlated positively with decoder error in two of the three mazes and negatively in the third. These results show that the proposed model gives a signal for decoding uncertainty, which is promising for long-term reliability in brain-computer interfaces. Nevertheless, a more thorough comparison with different methods and additional decoding models is necessary before broad implementation.
 
 ## Authors
 
@@ -86,11 +86,11 @@ The next result checks whether the conformal layer behaves like a useful uncerta
 
 | Maze | corr(decoder error, `\|C\|/K`) | corr(decoder error, `σθ(x)`) |
 |---|---|---|
-| Linear Maze | +0.88 | +0.89 |
-| Y Maze | +0.28 | +0.73 |
-| Loop Maze | +0.56 | +0.34 |
+| Linear Maze | +0.86 | +0.99 |
+| Y Maze | +0.61 | +0.68 |
+| Loop Maze | -0.78 | -0.86 |
 
-Table 2: Decoder error Pearson correlations. The first correlation uses the mean normalized trust region size $|\widehat{\mathcal{C}}|/K$. The second uses the MLP uncertainty scale $\sigma_\theta(x)$. Positive values indicate that decoder errors tend to coincide with larger trust regions or larger MLP scales.
+Table 2: Decoder error Pearson correlations over grouped test data points. The first correlation groups by normalized trust region size $|\widehat{\mathcal{C}}|/K$, one group per size level. The second groups by the MLP uncertainty scale $\sigma_\theta(x)$, in 10 equal-count bins. Each group contributes its error rate and is weighted by its number of data points. Positive values indicate that decoder errors tend to coincide with larger trust regions or larger MLP scales.
 
 To interpret the learned scale, the last figure varies each uncertainty input and measures how strongly the MLP output responds.
 
@@ -98,7 +98,7 @@ To interpret the learned scale, the last figure varies each uncertainty input an
   <img src="docs/readme-images/signal-confound.png" alt="Sensitivity of the learned conformal scale to each uncertainty signal" width="820">
 </p>
 
-Figure 8: Sensitivity of the learned conformal scale to each uncertainty signal. Bars show the mean variation of $\sigma_\theta(x)$ with respect to each input uncertainty signal, averaged over the test set for each maze. Larger values indicate that local changes in that signal produce larger changes in the MLP output.
+Figure 8: Sensitivity of the learned conformal scale to each uncertainty signal. Bars show the mean relative change of $\sigma_\theta(x)$, $|\partial \log \sigma_\theta(x) / \partial z|$, per standard deviation $z$ of each input uncertainty signal, averaged over the test set for each maze. The relative change does not depend on the overall level of $\sigma_\theta(x)$, so the mazes can be compared directly.
 
 The paper's LaTeX source is in [`paper/`](paper/README.md).
 
@@ -156,9 +156,10 @@ The main workflow is per-maze. `analyses/per_maze.ipynb` pools every usable mous
 After the per-maze bundles exist, `analyses/cross_maze.ipynb` reads them back and produces the cross-maze comparison tables and figures.
 
 ```bash
-make maze                         # run all analyzed mazes: More_Water, Y_Maze, Nested_All
-make maze PARADIGM=Y_Maze         # run one maze
-make cross-maze                   # compare saved per-maze bundles
+make maze-quick                   # 2-epoch smoke test of the whole pipeline, one seed
+make maze                         # all analyzed mazes (More_Water, Y_Maze, Nested_All) x seeds 42-46
+make maze PARADIGM=Y_Maze SEEDS=42  # one maze, one seed
+make cross-maze                   # compare saved bundles, mean ± sd across seeds
 ```
 
 Expected generated outputs:

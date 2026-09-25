@@ -28,4 +28,4 @@ The `src.conformal` package implements the learned class-conditional split-confo
 
 ## Decoder error evaluation
 
-::: src.conformal.trajectory
+::: src.conformal.error_correlation
