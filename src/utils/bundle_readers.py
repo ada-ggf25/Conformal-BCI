@@ -1,4 +1,4 @@
-"""Typed readers for the pooled per-maze ``metrics.json`` contract."""
+"""Typed readers for the per-maze chain bundle (``metrics.json`` and ``arrays.npz``)."""
 
 from __future__ import annotations
 
@@ -13,8 +13,7 @@ from ..conformal.error_correlation import error_correlations
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-# Name of the deployed method
-_DEPLOYED_ARM = "learned-scale class-conditional"
+from .artifacts import DEPLOYED_ARM as _DEPLOYED_ARM
 
 
 def n_mice(bundle: dict) -> int:
@@ -94,13 +93,6 @@ def whole_test_coverage(bundle: dict) -> dict[str, Any]:
         ),
         "target": 1.0 - float(c.get("alpha", 0.10)),
     }
-
-
-def class_conditional_thresholds(bundle: dict) -> dict[int, float]:
-    """Per-region conformal thresholds (q_hat) for the deployed learned-scale."""
-    arm = ((bundle.get("conformal") or {}).get("arms") or {}).get(_DEPLOYED_ARM) or {}
-    raw = arm.get("q_hat_by_region") or {}
-    return {int(c): (float("inf") if v is None else float(v)) for c, v in raw.items()}
 
 
 def deployed_operating_point(bundle: dict) -> dict[str, float]:
@@ -253,36 +245,44 @@ def seed_operating_curves(runs: dict[int, dict]) -> dict[str, Any]:
 
 
 def error_correlations_for_bundle(bundle: dict) -> dict | None:
-    """``error_correlations`` over a pooled bundle's saved test windows.
+    """``error_correlations`` over a chain bundle's test windows (the deployed method).
 
     Reads ``_arrays_path``, which ``load_maze_bundles`` injects below.
 
     Returns:
-        The ``error_correlations`` dict, or ``None`` if the bundle has no arrays, no
-        finite per-region thresholds, or no recorded class count.
+        The ``error_correlations`` dict, or ``None`` if the bundle has no arrays.
     """
     arr_path = bundle.get("_arrays_path")
-    qhats = class_conditional_thresholds(bundle)
-    if arr_path is None or not qhats or not bundle.get("n_classes"):
+    if arr_path is None:
         return None
-
     arrs = np.load(arr_path)
-    test_mask = arrs["win_split"] == 2
+    main = f"chain_{(bundle.get('conformal') or {}).get('rule', 'B3')}"
     return error_correlations(
-        arrs["win_probs"][test_mask],
-        arrs["win_sigma"][test_mask],
-        arrs["win_region"][test_mask],
-        qhats,
+        arrs[f"win_size_over_k_{main}"],
+        arrs[f"win_error_{main}"],
+        arrs["win_sigma_rel"],
     )
 
 
+def method_table(bundle: dict, group: str = "all") -> dict[str, dict[str, Any]]:
+    """Every method's pooled results for a session group (``"all"``, ``"returning"``,
+    ``"first"``): ``{method: {coverage, size_over_k, accuracy, mean_abs_gap, ...}}``."""
+    return ((bundle.get("conformal") or {}).get("methods") or {}).get(group) or {}
+
+
+def per_session_table(bundle: dict) -> list[dict[str, Any]]:
+    """The deployed method's per-session rows, in chain order."""
+    tc = (bundle.get("conformal") or {}).get("test_coverage") or {}
+    return list(tc.get("per_session") or [])
+
+
 def _load_bundle(metrics_path: Path) -> dict:
-    """One bundle's ``metrics.json`` plus the paths of its saved arrays and scale net."""
+    """One bundle's ``metrics.json`` plus the paths of its saved arrays and sigma nets."""
     m = json.loads(metrics_path.read_text())
     d = metrics_path.parent
     m["_arrays_path"] = (d / "arrays.npz") if (d / "arrays.npz").exists() else None
-    m["_scale_net_path"] = (
-        (d / "scale_net.pt") if (d / "scale_net.pt").exists() else None
+    m["_sigma_nets_path"] = (
+        (d / "sigma_nets.pt") if (d / "sigma_nets.pt").exists() else None
     )
     return m
 

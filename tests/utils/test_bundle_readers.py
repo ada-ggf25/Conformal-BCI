@@ -7,10 +7,14 @@ import json
 import numpy as np
 import pytest
 
+from src.utils.artifacts import build_chain_bundle, jsonify
 from src.utils.bundle_readers import (
+    deployed_operating_point,
+    error_correlations_for_bundle,
     load_maze_bundles,
     maze_summary_table,
     mean_sd,
+    method_table,
     per_region_coverage_table,
     seed_operating_curves,
     seed_session_coverage,
@@ -163,3 +167,73 @@ def test_loader_reads_seed_directories_and_falls_back_to_a_single_bundle(tmp_pat
     assert order == ["More_Water", "Y_Maze"]
     assert sorted(mazes["More_Water"]) == [42, 43]
     assert list(mazes["Y_Maze"]) == [42]
+
+
+def _ev(covered, size, error, level):
+    return {
+        "covered": np.array(covered, float),
+        "size_over_k": np.array(size, float),
+        "error": np.array(error, float),
+        "level": np.array(level),
+    }
+
+
+def test_a_written_chain_bundle_reads_back_pooled_over_windows(tmp_path):
+    """Two tested sessions (2 and 3 test windows, K = 2) written by build_chain_bundle and read
+    back: every headline number is pooled over the 5 test windows, worked by hand."""
+    rows = []
+    for name, first, labels, chain_ev, fresh_ev in (
+        ("M1_240102", True, [0, 1],
+         _ev([1, 0], [0.5, 1.0], [0, 1], ["own", "global"]),
+         _ev([1, 1], [1.0, 1.0], [1, 1], ["global"] * 2)),
+        ("M2_240103", False, [0, 0, 1],
+         _ev([1, 1, 1], [0.5] * 3, [0, 0, 1], ["own"] * 3),
+         _ev([0, 1, 1], [0.5, 1.0, 1.0], [0, 1, 1], ["global"] * 3)),
+    ):  # fmt: skip
+        n = len(labels)
+        rows.append(
+            {
+                "session": name, "mouse": name[:2], "first_of_mouse": first, "n_neurons": 6,
+                "labels": np.array(labels), "sigma_rel": np.ones(n),
+                "signals": np.zeros((n, 4)),
+                "methods": {"chain_B3": chain_ev, "fresh": fresh_ev},
+                "sweep": {0.9: {"covered": chain_ev["covered"],
+                                "size_over_k": chain_ev["size_over_k"]}},
+            }
+        )  # fmt: skip
+    chain = ["M2_240101", "M1_240102", "M2_240103"]
+    data = {
+        s: {
+            "regions": np.array([0, 1]),
+            "train_idx": np.array([0]),
+            "val_idx": np.array([1]),
+            "test_idx": np.array([], int),
+        }
+        for s in chain
+    }
+    metrics, arrays = build_chain_bundle(
+        rows, chain=chain, n_warmup=1, session_data=data, n_classes=2,
+        paradigm="More_Water", seed=42, alpha=0.1, rule="B3", config={},
+    )  # fmt: skip
+    out = tmp_path / "More_Water" / "ALL_MICE" / "seed_42"
+    out.mkdir(parents=True)
+    (out / "metrics.json").write_text(json.dumps(jsonify(metrics)))
+    np.savez(out / "arrays.npz", **arrays)
+
+    b = load_maze_bundles(tmp_path)[0]["More_Water"][42]
+    w = whole_test_coverage(b)
+    assert w["coverage"] == pytest.approx(4 / 5)  # 1+0+1+1+1 of 5 windows
+    assert w["per_session_coverage"] == pytest.approx([0.5, 1.0])
+    assert w["n_sessions_below"] == 1  # 0.5 < 0.9
+    assert deployed_operating_point(b)["size_over_k"] == pytest.approx(3.0 / 5)
+    assert b["decoder"]["raw_accuracy"] == pytest.approx(3 / 5)
+    table = method_table(b, "all")
+    assert table["fresh"]["coverage"] == pytest.approx(4 / 5)
+    assert table["fresh"]["accuracy"] == pytest.approx(1 / 5)
+    assert table["chain_B3"]["mean_abs_gap"] == pytest.approx((0.4 + 0.1) / 2)
+    assert table["chain_B3"]["share_global"] == pytest.approx(1 / 5)
+    assert method_table(b, "returning")["chain_B3"]["coverage"] == pytest.approx(1.0)
+    assert (
+        b["conformal"]["per_region_coverage"]["learned"]["0"] is None
+    )  # 3 < 5 windows
+    assert error_correlations_for_bundle(b)["size_points"]["n"].sum() == 5
