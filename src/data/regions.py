@@ -7,10 +7,9 @@ to assign region labels to neural windows.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import math
 
-if TYPE_CHECKING:
-    import numpy as np
+from .config import LINEAR_N_REGIONS
 
 
 def classify_point_ymaze(x: float, y: float) -> int:
@@ -45,12 +44,23 @@ def classify_point_nested(x: float, y: float) -> int:
     return 7 if x < 2500 else 8
 
 
-def classify_point_more_water(y: float, y_boundaries: np.ndarray | list) -> int:
-    """More-Water linear maze: n regions along the y-axis."""
-    for i in range(len(y_boundaries) - 1):
-        if y < y_boundaries[i + 1]:
-            return i
-    return len(y_boundaries) - 2
+def classify_point_more_water(
+    y: float, water: float, n_regions: int = LINEAR_N_REGIONS
+) -> int:
+    """Linear maze: ``n_regions`` equal segments of the run from the start (y = 0) to the water.
+
+    ``water`` is the trial's reward position. A position at or beyond it falls in the last
+    region. Returns -1 when the trial has no usable water position (NaN or not positive); such
+    windows are kept out of the task windows.
+    """
+    if not math.isfinite(water) or water <= 0:
+        return -1
+    return int(min(n_regions - 1, max(0, math.floor(n_regions * y / water))))
+
+
+def uses_water(paradigm: str) -> bool:
+    """True for the Linear maze, whose regions are defined relative to each trial's water."""
+    return "Y_Maze" not in paradigm and "Nested" not in paradigm
 
 
 def get_num_classes(paradigm: str) -> int:

@@ -9,6 +9,7 @@ from src.data.hybrid_io import (
     build_hybrid_neuron_mapping,
     create_windows_with_regions,
     extract_neural_and_position_hybrid,
+    trial_water_position,
     window_task_mask,
 )
 
@@ -75,12 +76,12 @@ class TestCreateWindowsWithRegions:
         _, regions = create_windows_with_regions(
             np.zeros((10, 2), dtype=np.float32),
             np.zeros(10),
-            np.full(10, 50.0),
+            np.full(10, 1300.0),
             10,
             "More_Water",
-            [0, 100, 200, 300],
+            np.full(10, 2500.0),
         )
-        assert regions[0] == 0  # y=50 < 100 -> bin 0
+        assert regions[0] == 4  # 1300 / 2500 of the run -> region floor(8 * 0.52) = 4
 
     def test_window_content_matches_the_neural_slice(self):
         """A slicing bug would silently pair each window with another window's label."""
@@ -143,7 +144,7 @@ class TestExtractNeuralAndPositionHybrid:
         _one_trial_db(db)
         neu.return_value = {"n1": [500, 1500]}  # 0.05 s -> bin 0 ; 0.15 s -> bin 1
         beh.return_value = {"X_Position": [1.0] * 100, "Y_Position": [2.0] * 100}
-        neural, _, _ = extract_neural_and_position_hybrid(
+        neural, _, _, _ = extract_neural_and_position_hybrid(
             db, "M21_250214", _config(["n1"]), 0.1
         )
         # Spike rate = count / bin_width = 1 / 0.1 = 10.0
@@ -165,8 +166,57 @@ class TestExtractNeuralAndPositionHybrid:
             "X_Position": [float(2 * i + 1) for i in range(10) for _ in range(2)],
             "Y_Position": [0.0] * 20,
         }
-        _, x_out, _ = extract_neural_and_position_hybrid(
+        _, x_out, _, _ = extract_neural_and_position_hybrid(
             db, "M21_250214", _config(["n1"]), 0.1
         )
         np.testing.assert_allclose(x_out[0], 1.0)  # mean([1, 1])
         np.testing.assert_allclose(x_out[1], 3.0)  # mean([3, 3])
+
+
+class TestTrialWaterPosition:
+    """The Linear maze's regions are fractions of the run to this position, so a wrong value
+    relabels every window of the trial."""
+
+    def test_position_plus_distance_is_the_water(self):
+        """Y + distance to water is constant within a trial and is the reward position."""
+        y = np.linspace(0.0, 2400.0, 50)
+        b = {
+            "Y_Position": y.tolist(),
+            "Direct_Distance_to_Water": (2500.0 - y).tolist(),
+        }
+        assert trial_water_position(b) == 2500.0
+
+    def test_rounding_wobble_is_merged_into_the_mode(self):
+        """Samples one 100-unit bin away (sideways offset in the distance) are the same water."""
+        y = np.zeros(100)
+        dist = np.r_[
+            np.full(60, 7500.0), np.full(40, 7560.0)
+        ]  # rounds to 7500 and 7600
+        b = {"Y_Position": y.tolist(), "Direct_Distance_to_Water": dist.tolist()}
+        assert trial_water_position(b) == 7500.0
+
+    def test_ill_defined_water_is_rejected(self):
+        """Below the minimum share of samples at the mode, the trial has no water position."""
+        y = np.zeros(100)
+        dist = np.r_[np.full(50, 2500.0), np.full(50, 7500.0)]
+        b = {"Y_Position": y.tolist(), "Direct_Distance_to_Water": dist.tolist()}
+        assert trial_water_position(b) is None
+
+    @patch("src.data.hybrid_io.session_name_to_date_id")
+    @patch("src.data.hybrid_io.get_neural")
+    @patch("src.data.hybrid_io.get_behavior")
+    def test_every_bin_of_a_trial_carries_its_water(self, beh, neu, did):
+        """The extraction broadcasts the trial's water position to each of its bins."""
+        db = _mock_db()
+        did.return_value = ObjectId()
+        _one_trial_db(db)
+        neu.return_value = {"n1": []}
+        beh.return_value = {
+            "X_Position": [0.0] * 20,
+            "Y_Position": [100.0] * 20,
+            "Direct_Distance_to_Water": [2400.0] * 20,
+        }
+        *_, water = extract_neural_and_position_hybrid(
+            db, "M21_250214", _config(["n1"]), 0.1
+        )
+        np.testing.assert_array_equal(water, np.full(10, 2500.0))

@@ -12,3 +12,10 @@ WINDOW_SIZE = 10
 
 MIN_NEURONS_PER_SESSION = 5
 """A session with fewer resolvable neurons is discarded."""
+
+LINEAR_N_REGIONS = 8
+"""Linear maze: the run from the start to the trial's water is cut into this many equal regions."""
+
+LINEAR_WATER_MIN_SHARE = 0.8
+"""A Linear trial keeps its water position only if the modal value (merged with its +-100 unit
+neighbors) covers at least this share of the trial's samples; otherwise the trial is dropped."""

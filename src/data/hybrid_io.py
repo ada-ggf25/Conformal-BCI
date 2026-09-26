@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 from ..db.database_utils import session_name_to_date_id
 from ..db.loader import get_behavior, get_neural
-from .config import BIN_WIDTH_SEC
+from .config import BIN_WIDTH_SEC, LINEAR_WATER_MIN_SHARE
 from .regions import (
     classify_point_more_water,
     classify_point_nested,
@@ -160,6 +160,36 @@ def _xy_columns(bdata: dict) -> tuple[str | None, str | None]:
     return x_col, y_col
 
 
+WATER_CHANNEL = "Direct_Distance_to_Water"
+"""Behavior channel with the distance from the animal to the trial's water reward."""
+
+
+def trial_water_position(
+    bdata: dict, min_share: float = LINEAR_WATER_MIN_SHARE
+) -> float | None:
+    """The trial's water reward position along the track, or None if it is ill-defined.
+
+    ``Y_Position + Direct_Distance_to_Water`` is the reward's position and is constant within a
+    trial. Samples are rounded to 100 units; the modal value, merged with its +-100 neighbors
+    (rounding wobble), must cover at least ``min_share`` of the samples.
+    """
+    _, y_col = _xy_columns(bdata)
+    if y_col is None or WATER_CHANNEL not in bdata:
+        return None
+    w = np.asarray(bdata[y_col], dtype=float) + np.asarray(
+        bdata[WATER_CHANNEL], dtype=float
+    )
+    w = w[np.isfinite(w)]
+    if len(w) == 0:
+        return None
+    r = np.round(w / 100.0) * 100.0
+    vals, counts = np.unique(r, return_counts=True)
+    mode = float(vals[np.argmax(counts)])
+    if np.mean(np.abs(r - mode) <= 100.0) < min_share:
+        return None
+    return mode
+
+
 def extract_positions_hybrid(
     db: Database,
     session_name: str,
@@ -212,11 +242,12 @@ def extract_neural_and_position_hybrid(
     session_config: dict,
     bin_width_sec: float = BIN_WIDTH_SEC,
 ) -> tuple:
-    """Extract binned spike counts and X/Y position for a whole session.
+    """Extract binned spike counts, X/Y position and the water position for a whole session.
 
     Iterates over all trials for the session in chronological order.
     Neural data is binned at bin_width_sec resolution. Position is
-    bin-averaged onto the same time axis as the neural bins.
+    bin-averaged onto the same time axis as the neural bins. Every bin of a trial carries that
+    trial's water position (``trial_water_position``), NaN when it is ill-defined or absent.
 
     Args:
         db:             pymongo Database
@@ -225,11 +256,12 @@ def extract_neural_and_position_hybrid(
         bin_width_sec:  time bin width in seconds
 
     Returns:
-        (neural, x, y) where:
+        (neural, x, y, water) where:
             neural: (n_bins_total, n_neurons) float32 array of spike rates
             x:      (n_bins_total,) float64 array of X positions
             y:      (n_bins_total,) float64 array of Y positions
-        Returns (None, None, None) if no usable trials are found.
+            water:  (n_bins_total,) float64 water position of each bin's trial (NaN if none)
+        Returns (None, None, None, None) if no usable trials are found.
     """
     date_id = session_name_to_date_id(db, session_name)
     trial_ids = [
@@ -245,6 +277,7 @@ def extract_neural_and_position_hybrid(
     all_neural: list[np.ndarray] = []
     all_x: list[np.ndarray] = []
     all_y: list[np.ndarray] = []
+    all_water: list[np.ndarray] = []
 
     for trial_id in trial_ids:
         doc = db["trials"].find_one({"_id": trial_id})
@@ -288,34 +321,33 @@ def extract_neural_and_position_hybrid(
                 trial_x[i] = np.nanmean(x_data[start_idx:end_idx])
                 trial_y[i] = np.nanmean(y_data[start_idx:end_idx])
 
+        water = trial_water_position(bdata)
         all_neural.append(trial_neural)
         all_x.append(trial_x)
         all_y.append(trial_y)
+        all_water.append(np.full(n_bins, np.nan if water is None else water))
 
     if not all_neural:
-        return None, None, None
+        return None, None, None, None
 
     return (
         np.vstack(all_neural),
         np.concatenate(all_x),
         np.concatenate(all_y),
+        np.concatenate(all_water),
     )
 
 
-def _classify_bin(
-    x: float,
-    y: float,
-    paradigm: str,
-    y_boundaries: np.ndarray | list | None,
-) -> int:
-    """Region label for a single position sample, dispatched on paradigm."""
+def _classify_bin(x: float, y: float, paradigm: str, water: float) -> int:
+    """Region label for a single position sample, dispatched on paradigm.
+
+    ``water`` (the trial's water position) is used by the Linear maze only.
+    """
     if "Y_Maze" in paradigm:
         return classify_point_ymaze(x, y)
     if "Nested" in paradigm:
         return classify_point_nested(x, y)
-    if y_boundaries is not None:
-        return classify_point_more_water(y, y_boundaries)
-    return min(7, max(0, int((y / 10000) * 8)))
+    return classify_point_more_water(y, water)
 
 
 def create_windows_with_regions(
@@ -324,7 +356,7 @@ def create_windows_with_regions(
     y_positions: np.ndarray,
     window_size: int,
     paradigm: str,
-    y_boundaries: np.ndarray | list | None = None,
+    water: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Slide a non-overlapping window over neural_data and assign region labels.
 
@@ -336,13 +368,15 @@ def create_windows_with_regions(
         y_positions:  (n_bins,) Y coordinates
         window_size:  bins per window (WINDOW_SIZE=10 → 1 s at 100 ms bins)
         paradigm:     maze type string.
-        y_boundaries: percentile-derived y thresholds for 'more_water' paradigm
+        water:        (n_bins,) water position per bin (Linear maze only; NaN if none)
 
     Returns:
         windows: (n_windows, window_size, n_neurons)
         regions: (n_windows,) int region labels
     """
     n_windows = len(neural_data) // window_size
+    if water is None:
+        water = np.full(len(neural_data), np.nan)
     windows = []
     regions = []
 
@@ -353,7 +387,7 @@ def create_windows_with_regions(
 
         regions.append(
             _classify_bin(
-                x_positions[end - 1], y_positions[end - 1], paradigm, y_boundaries
+                x_positions[end - 1], y_positions[end - 1], paradigm, water[end - 1]
             )
         )
 
@@ -419,7 +453,7 @@ def window_region_labels(
     y_positions: np.ndarray,
     window_size: int,
     paradigm: str,
-    y_boundaries: np.ndarray | list | None = None,
+    water: np.ndarray | None = None,
     reduce: str = "last",
 ) -> tuple[np.ndarray, np.ndarray]:
     """Per-window region labels with a choice of temporal reduction over the bins.
@@ -433,6 +467,8 @@ def window_region_labels(
         (regions, straddle): both length n_windows = len(x_positions) // window_size.
     """
     n_windows = len(x_positions) // window_size
+    if water is None:
+        water = np.full(len(x_positions), np.nan)
     regions = np.empty(n_windows, dtype=np.int64)
     straddle = np.zeros(n_windows, dtype=bool)
 
@@ -441,10 +477,11 @@ def window_region_labels(
         end = start + window_size
         xs = x_positions[start:end]
         ys = y_positions[start:end]
+        ws = water[start:end]
         bins_arr = np.asarray(
             [
-                _classify_bin(x, y, paradigm, y_boundaries)
-                for x, y in zip(xs, ys, strict=False)
+                _classify_bin(x, y, paradigm, w)
+                for x, y, w in zip(xs, ys, ws, strict=False)
             ]
         )
         straddle[i] = bins_arr.min() != bins_arr.max()

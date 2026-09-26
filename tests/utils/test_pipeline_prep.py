@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import numpy as np
 
-from src.utils.pipeline_prep import force_session_specific, normalize_session_windows
+from src.utils.pipeline_prep import (
+    assemble_session_data,
+    force_session_specific,
+    normalize_session_windows,
+)
 
 
 def _session(n=10, t=2, n_neurons=3, n_train=6):
@@ -65,3 +71,54 @@ class TestForceSessionSpecific:
         assert c["n_shared"] == 0 and c["shared_indices"] == []
         assert c["n_specific"] == 3 and c["specific_indices"] == [0, 1, 2]
         assert c["specific_ids"] == [11, 22, 33]
+
+
+class TestAssembleSessionData:
+    """Windows whose Linear trial has no water position have no region, so they must never
+    reach the train, calibration or test blocks."""
+
+    @staticmethod
+    def _run(paradigm):
+        n_windows, win = 30, 10
+        n_bins = n_windows * win
+        y = np.linspace(
+            0.0, 2400.0, n_bins
+        )  # a run toward water at 2500: several regions
+        water = np.full(n_bins, 2500.0)
+        water[5 * win : 6 * win] = np.nan  # window 5 belongs to a trial with no water
+        config = {"n_total": 6}
+        with (
+            patch(
+                "src.utils.pipeline_prep.build_hybrid_neuron_mapping",
+                return_value=([], {"S": config}),
+            ),
+            patch(
+                "src.utils.pipeline_prep.extract_neural_and_position_hybrid",
+                return_value=(
+                    np.zeros((n_bins, 6), "float32"),
+                    np.zeros(n_bins),
+                    y,
+                    water,
+                ),
+            ),
+            patch(
+                "src.utils.pipeline_prep.window_task_mask",
+                return_value=np.ones(n_windows, bool),
+            ),
+        ):
+            session_data, *_ = assemble_session_data(
+                None, ["S"], paradigm, train_frac=0.6, val_frac=0.3, test_frac=0.1
+            )
+        d = session_data["S"]
+        return set(
+            np.concatenate([d["train_idx"], d["val_idx"], d["test_idx"]]).tolist()
+        )
+
+    def test_linear_windows_without_water_are_dropped(self):
+        """Window 5 is excluded from every block on the Linear maze."""
+        used = self._run("More_Water")
+        assert 5 not in used and len(used) == 29
+
+    def test_other_mazes_ignore_the_water_position(self):
+        """The Y maze does not use water, so the same window is kept."""
+        assert 5 in self._run("Y_Maze")

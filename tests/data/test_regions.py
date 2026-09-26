@@ -40,8 +40,23 @@ def test_nested_each_region_maps_to_its_zone():
         assert classify_point_nested(x, y) == want, (x, y)
 
 
-def test_more_water_bins_along_y_with_half_open_edges():
-    """Each y value falls in the bin whose lower edge it meets; n regions from a list."""
-    bounds = [0, 100, 200, 300]  # -> 3 regions
-    for y, want in [(0, 0), (50, 0), (100, 1), (150, 1), (250, 2)]:
-        assert classify_point_more_water(y, bounds) == want, y
+def test_more_water_cuts_the_run_to_water_into_eight_equal_regions():
+    """Region k covers [k/8, (k+1)/8) of the distance to the trial's water; the start and
+    anything at or beyond the water clip to the first and last region."""
+    water = 2500.0  # one region spans 312.5 units
+    cases = [(-50, 0), (0, 0), (312, 0), (313, 1), (1250, 4), (2187, 6), (2188, 7),
+             (2499, 7), (2500, 7), (5000, 7)]  # fmt: skip
+    for y, want in cases:
+        assert classify_point_more_water(y, water) == want, y
+
+
+def test_more_water_regions_scale_with_the_water_position():
+    """The same fraction of the run is the same region, whatever the track length."""
+    for water in (2500.0, 7500.0, 27500.0):
+        assert classify_point_more_water(0.55 * water, water) == 4
+
+
+def test_more_water_without_a_water_position_is_unlabeled():
+    """A trial with no usable water position yields -1, never a real region."""
+    for water in (float("nan"), 0.0, -100.0):
+        assert classify_point_more_water(1000.0, water) == -1

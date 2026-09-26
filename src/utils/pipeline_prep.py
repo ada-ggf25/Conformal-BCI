@@ -16,49 +16,17 @@ from ..data.hybrid_io import (
     build_hybrid_neuron_mapping,
     create_windows_with_regions,
     extract_neural_and_position_hybrid,
-    extract_positions_hybrid,
     window_region_labels,
     window_task_mask,
 )
+from ..data.regions import uses_water
 from .splits import chronological_task_split
-
-
-def compute_y_boundaries(
-    db: Database,
-    pool_sessions: list[str],
-    session_configs: dict,
-    n_boundaries: int = 9,
-) -> np.ndarray:
-    """Compute percentile-based Y boundaries for Linear Maze region labeling.
-
-    Pools Y positions from all pool_sessions (train sessions only in holdout
-    mode), then returns np.linspace(p1, p99, n_boundaries).
-
-    Args:
-        db:             pymongo Database
-        pool_sessions:  session names whose positions are pooled
-        session_configs: from build_hybrid_neuron_mapping
-        n_boundaries:   number of boundary points (default 9 → 8 regions)
-
-    Returns:
-        1-D ndarray of n_boundaries boundary values
-    """
-    all_y: list[float] = []
-    for session_name in pool_sessions:
-        y_positions = extract_positions_hybrid(db, session_name, BIN_WIDTH_SEC)
-        if y_positions is not None:
-            all_y.extend(y_positions.tolist())
-    if all_y:
-        y_min, y_max = np.percentile(all_y, 1), np.percentile(all_y, 99)
-        return np.linspace(y_min, y_max, n_boundaries)
-    return np.linspace(0, 39000, n_boundaries)
 
 
 def assemble_session_data(
     db: Database,
     sessions: list[str],
     paradigm: str,
-    y_boundaries: np.ndarray | None = None,
     train_frac: float = 0.80,
     val_frac: float = 0.10,
     test_frac: float = 0.10,
@@ -70,8 +38,9 @@ def assemble_session_data(
     Args:
         db:           pymongo Database
         sessions:     ordered list of session names to process
-        paradigm:     maze type string (e.g. 'Y_Maze', 'Nested', 'More_Water')
-        y_boundaries: 1-D array of Y thresholds for More_Water (ignored otherwise)
+        paradigm:     maze type string (e.g. 'Y_Maze', 'Nested', 'More_Water'). For the
+                      Linear maze, windows of trials without a usable water position are
+                      kept out of the task windows (their regions are undefined).
         train_frac:   fraction for model training (default 0.80)
         val_frac:     fraction for early-stopping validation / q̂ (default 0.10)
         test_frac:    fraction for coverage evaluation (default 0.10)
@@ -97,14 +66,14 @@ def assemble_session_data(
         if config["n_total"] < MIN_NEURONS_PER_SESSION:
             continue
 
-        neural_data, x_positions, y_positions = extract_neural_and_position_hybrid(
-            db, session_name, config, BIN_WIDTH_SEC
+        neural_data, x_positions, y_positions, water = (
+            extract_neural_and_position_hybrid(db, session_name, config, BIN_WIDTH_SEC)
         )
         if neural_data is None:
             continue
 
         windows, regions = create_windows_with_regions(
-            neural_data, x_positions, y_positions, WINDOW_SIZE, paradigm, y_boundaries
+            neural_data, x_positions, y_positions, WINDOW_SIZE, paradigm, water
         )
 
         # Chronological within-session split over task (W) windows only.
@@ -112,6 +81,10 @@ def assemble_session_data(
         if len(task_mask) != len(windows):
             # Would silently misalign the task mask with the windows.
             continue
+        if uses_water(paradigm):
+            n = len(windows) * WINDOW_SIZE
+            has_water = np.isfinite(water[:n]).reshape(len(windows), WINDOW_SIZE)
+            task_mask = task_mask & has_water.all(axis=1)
         task_idx = np.flatnonzero(task_mask)
         if len(task_idx) < min_windows:
             continue
@@ -132,6 +105,7 @@ def assemble_session_data(
             "test_idx": test_idx,
             "x_positions": x_positions,
             "y_positions": y_positions,
+            "water_positions": water,
         }
         valid_sessions.append(session_name)
 
@@ -178,7 +152,6 @@ def apply_window_region_labels(
     valid_sessions: list[str],
     paradigm: str,
     *,
-    y_boundaries: np.ndarray | None,
     reduce: str,
     drop_straddle: bool,
     window_size: int = WINDOW_SIZE,
@@ -197,7 +170,7 @@ def apply_window_region_labels(
             d["y_positions"],
             window_size,
             paradigm,
-            y_boundaries=y_boundaries,
+            water=d.get("water_positions"),
             reduce=reduce,
         )
         n = len(d["regions"])
