@@ -66,3 +66,21 @@ def test_each_session_routes_through_its_own_input_projection():
     )
     out = no_spec(torch.zeros(_BATCH, _T, 2), "Sno", return_all=True)
     assert out["region_logits"].shape == (_BATCH, _NC)
+
+
+def test_adding_a_session_later_leaves_earlier_weights_untouched():
+    """In a session chain a session's layers are created when it arrives: a model grown by
+    add_session must keep every earlier weight exactly as a model built without that session."""
+    cfg = _configs()
+    torch.manual_seed(0)
+    alone = _encoder({"S1": cfg["S1"]})
+    torch.manual_seed(0)
+    grown = _encoder({"S1": cfg["S1"]})
+    grown.add_session("S2", cfg["S2"])
+    before, after = alone.state_dict(), grown.state_dict()
+    assert set(before) < set(after)
+    for k, v in before.items():
+        assert torch.equal(v, after[k]), k
+    x = torch.randn(_BATCH, _T, 5)
+    grown.eval()
+    assert torch.isfinite(grown.get_latent(x, "S2")).all()

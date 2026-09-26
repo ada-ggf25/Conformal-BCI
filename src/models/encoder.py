@@ -21,15 +21,9 @@ class _SharedSessionEncoder(nn.Module):
         hidden_dim: int = HIDDEN_DIM,
     ) -> None:
         super().__init__()
+        self.shared_dim = shared_dim
         for session_name, cfg in session_configs.items():
-            self.register_buffer(
-                f"shared_idx_{session_name}",
-                torch.tensor(cfg["shared_indices"], dtype=torch.long),
-            )
-            self.register_buffer(
-                f"specific_idx_{session_name}",
-                torch.tensor(cfg["specific_indices"], dtype=torch.long),
-            )
+            self._register_indices(session_name, cfg)
 
         self.shared_projection = nn.Sequential(
             nn.Linear(n_shared, shared_dim),
@@ -38,12 +32,7 @@ class _SharedSessionEncoder(nn.Module):
         )
         self.session_projections: nn.ModuleDict = nn.ModuleDict()
         for session_name, cfg in session_configs.items():
-            if cfg["n_specific"] > 0:
-                self.session_projections[session_name] = nn.Sequential(
-                    nn.Linear(cfg["n_specific"], shared_dim),
-                    nn.LayerNorm(shared_dim),
-                    nn.ReLU(),
-                )
+            self._add_projection(session_name, cfg)
 
         self.fusion_gate = nn.Sequential(
             nn.Linear(shared_dim * 2, shared_dim), nn.Sigmoid()
@@ -60,6 +49,29 @@ class _SharedSessionEncoder(nn.Module):
         )
         self.fc_mu = nn.Linear(hidden_dim * 2, latent_dim)
         self.fc_logvar = nn.Linear(hidden_dim * 2, latent_dim)
+
+    def _register_indices(self, session_name: str, cfg: dict) -> None:
+        self.register_buffer(
+            f"shared_idx_{session_name}",
+            torch.tensor(cfg["shared_indices"], dtype=torch.long),
+        )
+        self.register_buffer(
+            f"specific_idx_{session_name}",
+            torch.tensor(cfg["specific_indices"], dtype=torch.long),
+        )
+
+    def _add_projection(self, session_name: str, cfg: dict) -> None:
+        if cfg["n_specific"] > 0:
+            self.session_projections[session_name] = nn.Sequential(
+                nn.Linear(cfg["n_specific"], self.shared_dim),
+                nn.LayerNorm(self.shared_dim),
+                nn.ReLU(),
+            )
+
+    def add_session(self, session_name: str, cfg: dict) -> None:
+        """Register a new session's index buffers and input projection."""
+        self._register_indices(session_name, cfg)
+        self._add_projection(session_name, cfg)
 
     def forward(
         self, x: torch.Tensor, session_name: str
@@ -130,6 +142,24 @@ class SharedTemporalClassifier(nn.Module):
             nn.Dropout(0.2),
             nn.Linear(hidden_dim // 2, n_classes),
         )
+
+    def add_session(self, session_name: str, cfg: dict) -> None:
+        """Add a session that was not known at construction (a model carried across sessions).
+
+        Creates its index buffers, input projection and read-out on the model's device. They are
+        initialized at this call, so a session added later never changes the initialization of
+        anything created before it.
+
+        Args:
+            session_name: the new session's name.
+            cfg:          its entry from ``build_hybrid_neuron_mapping``.
+        """
+        device = next(self.parameters()).device
+        self.encoder.add_session(session_name, cfg)
+        self.session_read_outs[session_name] = nn.Sequential(
+            nn.Linear(self.fc_factors.out_features, cfg["n_total"]), nn.Softplus()
+        )
+        self.to(device)
 
     def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """Draw z -> N(mu, exp(logvar)).
