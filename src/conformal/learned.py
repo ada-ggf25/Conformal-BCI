@@ -379,30 +379,6 @@ def scale_of(net: ScaleNet, signals_z: np.ndarray, device: str = "cpu") -> np.nd
         return net(X).cpu().numpy().astype(np.float64)
 
 
-def load_scale_net(
-    checkpoint: dict,
-) -> tuple[ScaleNet, list[str], np.ndarray, np.ndarray]:
-    """Reconstruct a trained ``ScaleNet`` from the checkpoint dict ``per_maze.ipynb`` saves.
-
-    Returns:
-        ``(net, signals, signal_mean, signal_std)``: ``net`` in eval mode, ``signals`` is the
-        input-column order the checkpoint was trained on, ``signal_mean``/``signal_std`` are the
-        exact standardization stats ``ũ(x)`` used at training time, so a caller can rebuild the
-        model's inputs from raw per-window signal values without re-deriving them.
-    """
-    signals = list(checkpoint["signals"])
-    net = ScaleNet(
-        n_signals=len(signals),
-        hidden=int(checkpoint["hidden"]),
-        depth=int(checkpoint["depth"]),
-    )
-    net.load_state_dict(checkpoint["state_dict"])
-    net.eval()
-    mean = np.asarray(checkpoint["signal_mean"], dtype=float)
-    std = np.asarray(checkpoint["signal_std"], dtype=float)
-    return net, signals, mean, std
-
-
 def signal_sensitivity(
     net: ScaleNet,
     signals_raw: np.ndarray,
@@ -429,20 +405,36 @@ def signal_sensitivity(
 
 
 def signal_sensitivity_for_bundle(bundle: dict) -> dict[str, Any] | None:
-    """Mean absolute ``signal_sensitivity``, computed from a pooled bundle's saved files.
+    """Mean absolute ``signal_sensitivity`` over a chain bundle's test windows.
+
+    Each tested session's sigma (``sigma_nets.pt``) is differentiated on that session's own
+    test windows; the absolute gradients are then pooled over every test window.
 
     Returns:
         ``{"signals": [...], "mean_abs_log_grad": array of shape (n_signals,)}``, or ``None`` if the
-        bundle has no saved scale net or no saved arrays.
+        bundle has no saved sigma nets or no saved arrays.
     """
-    sn_path, arr_path = bundle.get("_scale_net_path"), bundle.get("_arrays_path")
+    sn_path, arr_path = bundle.get("_sigma_nets_path"), bundle.get("_arrays_path")
     if sn_path is None or arr_path is None:
         return None
-
-    ckpt = torch.load(sn_path, map_location="cpu", weights_only=False)
-    net, signal_names, sig_mean, sig_std = load_scale_net(ckpt)
+    payload = torch.load(sn_path, map_location="cpu", weights_only=False)
+    names = list(payload["signals"])
     arrs = np.load(arr_path)
-    test_mask = arrs["win_split"] == 2
-    raw = np.stack([arrs[f"win_{s}"][test_mask] for s in signal_names], axis=1)
-    grad = signal_sensitivity(net, raw, sig_mean, sig_std)
-    return {"signals": signal_names, "mean_abs_log_grad": np.abs(grad).mean(axis=0)}
+    raw = np.stack([arrs[f"win_{s}"] for s in names], axis=1)
+    grads = []
+    for i, sess in enumerate(payload["sessions"]):
+        net = ScaleNet(len(names), hidden=payload["hidden"], depth=payload["depth"])
+        net.load_state_dict(sess["state_dict"])
+        rows = arrs["win_session_idx"] == i
+        grads.append(
+            signal_sensitivity(
+                net,
+                raw[rows],
+                np.asarray(sess["signal_mean"]),
+                np.asarray(sess["signal_std"]),
+            )
+        )
+    return {
+        "signals": names,
+        "mean_abs_log_grad": np.abs(np.vstack(grads)).mean(axis=0),
+    }
