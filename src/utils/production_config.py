@@ -52,3 +52,19 @@ MLP_SIZE_WEIGHT = 1.0
 MLP_CAL_SPLIT = "chronological"
 """How each training batch is halved into quantile and scored rows (``"random"`` or
 ``"chronological"``, earlier half of each session's rows vs later half)."""
+
+# session chain protocol
+CHAIN_WARMUP_SESSIONS = 3
+"""The chain's first sessions: trained and calibrated, never tested."""
+
+CHAIN_SPLIT = (0.60, 0.30, 0.10)
+"""Every tested session's chronological train / calibration / test fractions."""
+
+WARMUP_TRAIN_FRAC = 0.70
+"""A warm-up session's train fraction (the rest is its calibration block; no test block)."""
+
+POOL_RULE = "B3"
+"""Per-region q_hat: own calibration block, a starved region borrows the last 3 sessions'."""
+
+POOL_SENSITIVITY = ("B1", "B5")
+"""Pool rules reported alongside ``POOL_RULE`` as a sensitivity analysis."""

@@ -10,6 +10,11 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import torch
 
+from ..utils.production_config import (
+    CHAIN_WARMUP_SESSIONS,
+    POOL_RULE,
+    POOL_SENSITIVITY,
+)
 from .evaluate import evaluate_block
 from .order import first_session_flags
 from .pool import borrow_depth, marginal_qhats, pooled_qhats
@@ -31,10 +36,10 @@ class ChainConfig:
 
     seed: int = 42
     device: str = "cpu"
-    warmup: int = 3
+    warmup: int = CHAIN_WARMUP_SESSIONS
     alpha: float = 0.10
-    rule: str = "B3"
-    sensitivity: tuple[str, ...] = ("B1", "B5")
+    rule: str = POOL_RULE
+    sensitivity: tuple[str, ...] = POOL_SENSITIVITY
     sweep_targets: tuple[float, ...] = SWEEP_TARGETS
     baseline: bool = True
     budget: TrainBudget = field(default_factory=TrainBudget)
