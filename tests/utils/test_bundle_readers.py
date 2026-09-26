@@ -16,7 +16,9 @@ from src.utils.bundle_readers import (
     mean_sd,
     method_table,
     per_region_coverage_table,
+    seed_method_table,
     seed_operating_curves,
+    seed_per_session_table,
     seed_session_coverage,
     whole_test_coverage,
 )
@@ -236,3 +238,42 @@ def test_a_written_chain_bundle_reads_back_pooled_over_windows(tmp_path):
         b["conformal"]["per_region_coverage"]["learned"]["0"] is None
     )  # 3 < 5 windows
     assert error_correlations_for_bundle(b)["size_points"]["n"].sum() == 5
+
+
+def _seed_bundle(fresh_cov, sessions):
+    """A minimal chain bundle: a method table and per-session rows (session, coverage, error)."""
+    b = _section_bundle()
+    b["conformal"]["methods"] = {
+        "all": {"chain_B3": {"coverage": 0.9, "size_over_k": 0.5, "accuracy": 0.3,
+                             "mean_abs_gap": 0.05},
+                "fresh": {"coverage": fresh_cov, "size_over_k": 0.6, "accuracy": 0.2,
+                          "mean_abs_gap": 0.10}}
+    }  # fmt: skip
+    b["conformal"]["test_coverage"]["per_session"] = [
+        {"session": s, "coverage": c, "error": e, "first_of_mouse": f, "n_neurons": 9}
+        for s, c, e, f in sessions
+    ]
+    return b
+
+
+def test_method_table_is_mean_and_sd_across_seeds():
+    """Each method's field is averaged over seeds; a field equal in every seed has sd 0."""
+    runs = {42: _seed_bundle(0.80, []), 43: _seed_bundle(0.84, [])}
+    t = seed_method_table(runs)
+    assert t["fresh"]["coverage"][0] == pytest.approx(0.82)
+    assert t["fresh"]["coverage"][1] == pytest.approx(np.std([0.80, 0.84], ddof=1))
+    assert t["chain_B3"]["coverage"] == pytest.approx((0.9, 0.0))
+
+
+def test_per_session_table_matches_sessions_by_name_in_chain_order():
+    """The second seed lists the sessions in another order; results pair up by name."""
+    a = [("M1_240102", 0.8, 0.5, True), ("M2_240103", 1.0, 0.7, False)]
+    runs = {
+        42: _seed_bundle(0.8, a),
+        43: _seed_bundle(0.8, [(n, c - 0.2, e, f) for n, c, e, f in a][::-1]),
+    }
+    t = seed_per_session_table(runs)
+    assert t["sessions"] == ["M1_240102", "M2_240103"]
+    assert t["coverage"] == pytest.approx([0.7, 0.9])
+    assert t["accuracy"] == pytest.approx([0.5, 0.3])
+    assert t["first_of_mouse"] == [True, False]

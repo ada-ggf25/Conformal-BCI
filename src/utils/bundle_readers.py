@@ -214,6 +214,67 @@ def seed_session_coverage(runs: dict[int, dict]) -> dict[str, Any]:
     }
 
 
+def seed_method_table(
+    runs: dict[int, dict],
+    group: str = "all",
+    fields: Sequence[str] = ("coverage", "size_over_k", "accuracy", "mean_abs_gap"),
+) -> dict[str, dict[str, tuple[float, float]]]:
+    """Every method's results for a session group, as (mean, sd) across seeds.
+
+    Args:
+        runs:   seed -> bundle, one maze's entry of ``load_maze_bundles``.
+        group:  ``"all"``, ``"returning"`` or ``"first"``.
+        fields: which ``method_table`` fields to aggregate.
+
+    Returns:
+        ``{method: {field: (mean, sd)}}``; the sd is NaN with a single seed.
+    """
+    tables = seed_values(runs, lambda m: method_table(m, group) or None)
+    out: dict[str, dict[str, tuple[float, float]]] = {}
+    for method in tables[0] if tables else []:
+        out[method] = {}
+        for f in fields:
+            mean, sd = mean_sd([t[method][f] for t in tables if method in t])
+            out[method][f] = (float(mean[0]), float(sd[0]))
+    return out
+
+
+def seed_per_session_table(runs: dict[int, dict]) -> dict[str, Any]:
+    """The deployed method per tested session, mean and sd across seeds, in chain order.
+
+    Sessions are matched by name. The first-session flag and the neuron count do not depend on
+    the seed and come from the first seed.
+
+    Returns:
+        ``{"sessions", "coverage", "coverage_sd", "accuracy", "accuracy_sd",
+        "first_of_mouse", "n_neurons", "target"}``.
+    """
+    first = per_session_table(runs[min(runs)])
+    names = [r["session"] for r in first]
+    by_seed = [
+        {r["session"]: r for r in per_session_table(runs[s])} for s in sorted(runs)
+    ]
+
+    def _field(fn: Callable[[dict], float]) -> tuple[list, list]:
+        mean, sd = mean_sd(
+            [[fn(t[n]) if n in t else None for n in names] for t in by_seed]
+        )
+        return mean.tolist(), sd.tolist()
+
+    cov, cov_sd = _field(lambda r: r["coverage"])
+    acc, acc_sd = _field(lambda r: 1.0 - r["error"])
+    return {
+        "sessions": names,
+        "coverage": cov,
+        "coverage_sd": cov_sd,
+        "accuracy": acc,
+        "accuracy_sd": acc_sd,
+        "first_of_mouse": [bool(r["first_of_mouse"]) for r in first],
+        "n_neurons": [r["n_neurons"] for r in first],
+        "target": whole_test_coverage(runs[min(runs)])["target"],
+    }
+
+
 def seed_operating_curves(runs: dict[int, dict]) -> dict[str, Any]:
     """The retrained coverage-sharpness sweep, mean and sd over seeds, per target.
 
