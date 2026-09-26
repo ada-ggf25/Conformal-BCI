@@ -15,6 +15,8 @@ For reproducibility purposes, [`analyses/per_maze.ipynb`](analyses/per_maze.ipyn
 | `cross_maze.ipynb` | reads every seed's bundle and compares the mazes | yes |
 | `artifacts/<paradigm_slug>/ALL_MICE/seed_<k>/` | one run's bundle and its rendered notebook | no (heavy regenerable) |
 | `artifacts/_quick/` | smoke-run bundles (`--quick`), never read by `cross_maze.ipynb` | no |
+| `pilot_chain.py` | pilot of session-by-session training (a chain fine-tuned session to session) against a fresh model per session | yes |
+| `artifacts/pilot_chain/` | the pilot's `results.json` and figure | no |
 
 ## Usage
 
@@ -26,4 +28,5 @@ make maze PARADIGM=Nested_All SEEDS=42                           # one maze, one
 uv run python analyses/run_mazes.py --paradigm Y_Maze --seeds 42 43 --force  # rerun finished runs
 
 make cross-maze                                                  # compare every maze using the saved bundles
+make pilot-chain PARADIGM=Nested_All                             # session-by-session pilot, one maze
 ```
