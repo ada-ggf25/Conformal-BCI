@@ -1,0 +1,327 @@
+"""The model carried along the chain: encoder, alignment decoder, conformal scale sigma."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+import torch
+from torch.utils.data import DataLoader
+
+from ..conformal.learned import ScaleNet, scale_of, train_scale
+from ..conformal.signals import SIGNALS, SignalStats, standardize_signals
+from ..conformal.strain import compute_encoder_spectral_norms, compute_spectral_norms
+from ..data.datasets import (
+    HybridClassificationDataset,
+    LatentSequenceDataset,
+    hybrid_collate_fn,
+)
+from ..models.alignment import AlignmentDecoder
+from ..models.config import (
+    BATCH_SIZE,
+    KL_WARMUP_EPOCHS,
+    LATENT_DIM,
+    STEP1_LEARNING_RATE,
+    STEP2_LEARNING_RATE,
+    STEP2_SEQ_LEN,
+)
+from ..models.encoder import SharedTemporalClassifier
+from ..models.latents import (
+    build_latent_sequences,
+    extract_aligned_latents,
+    extract_latents_hybrid,
+    extract_logvar,
+)
+from ..models.training import train_step1, train_step2
+from ..utils.pipeline_prep import compute_class_counts
+from ..utils.production_config import (
+    MLP_CAL_SPLIT,
+    MLP_DEPTH,
+    MLP_HIDDEN,
+    MLP_KAPPA,
+    MLP_SIZE_WEIGHT,
+    MLP_TAU,
+    STEP1_CLASS_WEIGHT_POWER,
+    STEP1_KL_FREE_BITS,
+    STEP1_KL_WEIGHT,
+    STEP1_REGION_WEIGHT,
+    STEP1_WEIGHT_DECAY,
+    STEP2_CLASS_WEIGHT_POWER,
+    STEP2_CONTRASTIVE_WEIGHT,
+    STEP2_DROPOUT,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+
+@dataclass(frozen=True)
+class TrainBudget:
+    """Epoch caps and early-stopping patience for the three trained stages."""
+
+    epochs: int = 200
+    patience: int = 20
+    mlp_epochs: int = 300
+    mlp_patience: int = 30
+
+
+class ChainModel:
+    """Encoder + alignment decoder + conformal scale, trained session by session.
+
+    Built for the chain's first session; every later session is added when it arrives
+    (``SharedTemporalClassifier.add_session``), so nothing about it depends on sessions that come
+    after. Sigma and its signal standardization are replaced by each ``fit``.
+    """
+
+    def __init__(
+        self,
+        first_session: str,
+        config: dict,
+        n_classes: int,
+        device: torch.device,
+    ) -> None:
+        self.step1 = SharedTemporalClassifier(
+            n_shared=0, session_configs={first_session: config}, n_classes=n_classes
+        ).to(device)
+        self.dec = AlignmentDecoder(
+            latent_dim=LATENT_DIM,
+            n_classes=n_classes,
+            seq_len=STEP2_SEQ_LEN,
+            dropout=STEP2_DROPOUT,
+        ).to(device)
+        self.sessions = [first_session]
+        self.sigma: ScaleNet | None = None
+        self.stats: SignalStats | None = None
+        self.n_classes, self.device = n_classes, device
+
+    def add_session(self, session: str, config: dict) -> None:
+        """Create a newly arrived session's input layer and read-out."""
+        if session not in self.sessions:
+            self.step1.add_session(session, config)
+            self.sessions.append(session)
+
+    # ------------------------------------------------------------------ training
+
+    def fit(
+        self,
+        s: str,
+        d: dict,
+        *,
+        from_scratch: bool,
+        budget: TrainBudget,
+        alpha: float,
+        seed: int,
+        train_sigma: bool = True,
+    ) -> dict[str, Any]:
+        """Train (or fine-tune) the stages on session ``s``'s training block.
+
+        Early stopping uses the session's calibration block (``val_idx``). The KL warm-up runs
+        only when training from scratch. Sigma is fine-tuned from the previous session's sigma.
+
+        Returns:
+            The training-block and calibration-block signal inputs sigma was fit on (for the
+            coverage-sweep branches): ``{"tr", "va"}``, each ``{"u", "probs", "labels"}``.
+        """
+        batch = min(BATCH_SIZE, 256)
+        one = {s: d}
+        counts = compute_class_counts(one, [s])
+        silent: Callable[[str], None] = lambda _m: None  # noqa: E731
+        quiet = budget.epochs + 1
+        self.step1, _ = train_step1(
+            model=self.step1,
+            loader=DataLoader(
+                HybridClassificationDataset(one, index_key="train_idx"),
+                batch_size=batch,
+                shuffle=True,
+                collate_fn=hybrid_collate_fn,
+            ),
+            val_loader=DataLoader(
+                HybridClassificationDataset(one, index_key="val_idx"),
+                batch_size=batch,
+                shuffle=False,
+                collate_fn=hybrid_collate_fn,
+            ),
+            device=self.device,
+            log_fn=silent,
+            n_classes=self.n_classes,
+            num_epochs=budget.epochs,
+            lr=STEP1_LEARNING_RATE,
+            classifier_weight_decay=STEP1_WEIGHT_DECAY,
+            region_weight=STEP1_REGION_WEIGHT,
+            class_weight_power=STEP1_CLASS_WEIGHT_POWER,
+            class_counts=counts,
+            kl_weight=STEP1_KL_WEIGHT,
+            kl_free_bits=STEP1_KL_FREE_BITS,
+            kl_warmup_epochs=KL_WARMUP_EPOCHS if from_scratch else 0,
+            early_stop_patience=budget.patience,
+            log_every=quiet,
+        )
+        d["step1_all_latents"] = extract_latents_hybrid(
+            self.step1, d["windows"], s, self.device
+        )
+        self.dec, _ = train_step2(
+            alignment_decoder=self.dec,
+            loader=DataLoader(
+                LatentSequenceDataset(one, [s], STEP2_SEQ_LEN, "train_idx"),
+                batch_size=batch,
+                shuffle=True,
+            ),
+            val_loader=DataLoader(
+                LatentSequenceDataset(one, [s], STEP2_SEQ_LEN, "val_idx"),
+                batch_size=batch,
+                shuffle=False,
+            ),
+            device=self.device,
+            log_fn=silent,
+            n_classes=self.n_classes,
+            num_epochs=budget.epochs,
+            lr=STEP2_LEARNING_RATE,
+            class_counts=counts,
+            class_weight_power=STEP2_CLASS_WEIGHT_POWER,
+            contrastive_weight=STEP2_CONTRASTIVE_WEIGHT,
+            early_stop_patience=budget.patience,
+            log_every=quiet,
+        )
+        fw = self.forward(s, d)
+        inputs = {
+            k: {
+                "u": self.signals(s, d, fw, d[idx]),
+                "probs": fw["probs"][d[idx]],
+                "labels": d["regions"][d[idx]],
+            }
+            for k, idx in (("tr", "train_idx"), ("va", "val_idx"))
+        }
+        self.stats = SignalStats.fit(inputs["tr"]["u"])
+        if train_sigma:
+            self.sigma = self.train_sigma(
+                inputs, alpha, None if from_scratch else self.sigma, budget, seed
+            )
+        return inputs
+
+    def train_sigma(
+        self,
+        inputs: dict[str, dict[str, np.ndarray]],
+        alpha: float,
+        init: ScaleNet | None,
+        budget: TrainBudget,
+        seed: int,
+    ) -> ScaleNet:
+        """Fit sigma on the training-block inputs, early-stopped on the calibration block."""
+        assert self.stats is not None
+        tr, va = inputs["tr"], inputs["va"]
+        net, _ = train_scale(
+            standardize_signals(tr["u"], self.stats),
+            tr["probs"],
+            tr["labels"],
+            alpha=alpha,
+            hidden=MLP_HIDDEN,
+            depth=MLP_DEPTH,
+            epochs=budget.mlp_epochs,
+            tau=MLP_TAU,
+            kappa=MLP_KAPPA,
+            size_weight=MLP_SIZE_WEIGHT,
+            val_signals_z=standardize_signals(va["u"], self.stats),
+            val_probs=va["probs"],
+            val_labels=va["labels"],
+            early_stop_patience=budget.mlp_patience,
+            n_classes=self.n_classes,
+            split=MLP_CAL_SPLIT,
+            groups=np.zeros(len(tr["labels"]), int),
+            val_groups=np.zeros(len(va["labels"]), int),
+            init_net=init,
+            seed=seed,
+            device=str(self.device),
+        )
+        return net
+
+    # ------------------------------------------------------------------ inference
+
+    def forward(self, s: str, d: dict) -> dict[str, np.ndarray]:
+        """Latents, log-variances and softmax probabilities for every window of a session."""
+        self.step1.eval()
+        self.dec.eval()
+        lat = extract_latents_hybrid(self.step1, d["windows"], s, self.device)
+        lv = extract_logvar(self.step1, d["windows"], s, self.device)
+        with torch.no_grad():
+            al = extract_aligned_latents(self.dec, lat, self.device, STEP2_SEQ_LEN)
+            logits = self.dec.decoder(torch.from_numpy(al).to(self.device))
+            probs = torch.softmax(logits, dim=-1).cpu().numpy().astype(np.float64)
+        return {"latents": lat, "logvar": lv, "probs": probs}
+
+    def signals(
+        self, s: str, d: dict, fw: dict[str, np.ndarray], idx: np.ndarray
+    ) -> np.ndarray:
+        """The four uncertainty signals (``SIGNALS`` order) for the windows ``idx``."""
+        p = fw["probs"][idx]
+        ent = -(p * np.log(np.clip(p, 1e-10, 1.0))).sum(axis=1)
+        var = np.exp(fw["logvar"][idx].astype(np.float64)).mean(axis=1)
+        seqs = build_latent_sequences(fw["latents"], STEP2_SEQ_LEN)[idx]
+        aj = compute_spectral_norms(self.dec, seqs, self.device)
+        ej = compute_encoder_spectral_norms(
+            self.step1, d["windows"][idx], s, self.device
+        )
+        return np.column_stack([ent, var, aj, ej]).astype(np.float64)
+
+    def block(self, s: str, d: dict, idx: np.ndarray) -> dict[str, np.ndarray]:
+        """Probabilities, raw signals and labels of the windows ``idx``, under the current model."""
+        fw = self.forward(s, d)
+        return {
+            "probs": fw["probs"][idx],
+            "u": self.signals(s, d, fw, idx),
+            "labels": d["regions"][idx],
+        }
+
+    def score(
+        self, blk: dict[str, np.ndarray], sigma: ScaleNet | None = None
+    ) -> dict[str, np.ndarray]:
+        """Sigma and true-class scores ``(1 - p_y) / sigma`` for a block.
+
+        ``sigma`` defaults to the deployed sigma; pass a sweep branch to score with it. With no
+        deployed sigma (a baseline model) the scale is 1, i.e. standard split conformal.
+        """
+        net = sigma if sigma is not None else self.sigma
+        if net is None:
+            sig = np.ones(len(blk["labels"]))
+        else:
+            assert self.stats is not None
+            sig = scale_of(
+                net, standardize_signals(blk["u"], self.stats), device=str(self.device)
+            )
+        p_true = blk["probs"][np.arange(len(blk["labels"])), blk["labels"]]
+        return {
+            "probs": blk["probs"],
+            "sigma": sig,
+            "labels": blk["labels"],
+            "scores": (1.0 - p_true) / sig,
+        }
+
+    # ------------------------------------------------------------------ checkpoints
+
+    def state(self) -> dict[str, Any]:
+        """Everything needed to rebuild the model (sessions, weights, sigma, stats)."""
+        return {
+            "sessions": list(self.sessions),
+            "step1": self.step1.state_dict(),
+            "dec": self.dec.state_dict(),
+            "sigma": None if self.sigma is None else self.sigma.state_dict(),
+            "stats": None
+            if self.stats is None
+            else (self.stats.mean.tolist(), self.stats.std.tolist()),
+        }
+
+    def load(self, state: dict[str, Any], configs: dict) -> None:
+        """Restore a ``state()``: re-add its sessions, then load the weights."""
+        for s in state["sessions"]:
+            self.add_session(s, configs[s])
+        self.step1.load_state_dict(state["step1"])
+        self.dec.load_state_dict(state["dec"])
+        if state["sigma"] is not None:
+            self.sigma = ScaleNet(len(SIGNALS), hidden=MLP_HIDDEN, depth=MLP_DEPTH).to(
+                self.device
+            )
+            self.sigma.load_state_dict(state["sigma"])
+        if state["stats"] is not None:
+            self.stats = SignalStats(
+                np.asarray(state["stats"][0]), np.asarray(state["stats"][1])
+            )
