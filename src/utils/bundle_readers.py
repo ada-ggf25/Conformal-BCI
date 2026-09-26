@@ -295,9 +295,8 @@ def load_maze_bundles(
 ) -> tuple[dict, list[str]]:
     """Load every per-seed bundle under ``<artifacts_dir>/<Paradigm>/ALL_MICE/seed_<k>/``.
 
-    A maze with no ``seed_<k>`` directories falls back to a single bundle directly under
-    ``ALL_MICE/`` (the layout before seed sweeps), keyed by its recorded seed or, for bundles
-    that predate the ``seed`` field, by 42, the notebook's default.
+    Only chain bundles are read: a bundle directly under ``ALL_MICE/`` (the pooled layout
+    before the session chain) is ignored.
 
     Args:
         artifacts_dir: the ``analyses/artifacts`` directory.
@@ -311,10 +310,7 @@ def load_maze_bundles(
     artifacts_dir = Path(artifacts_dir)
     mazes: dict = {}
     for cohort_dir in sorted(artifacts_dir.glob("*/ALL_MICE")):
-        paths = sorted(cohort_dir.glob("seed_*/metrics.json"))
-        if not paths and (cohort_dir / "metrics.json").exists():
-            paths = [cohort_dir / "metrics.json"]
-        for mf in paths:
+        for mf in sorted(cohort_dir.glob("seed_*/metrics.json")):
             m = _load_bundle(mf)
             if "test_coverage" not in (m.get("conformal") or {}):
                 if log_fn is not None:
@@ -322,7 +318,7 @@ def load_maze_bundles(
                         f"  skip {mf.parent}: bundle missing conformal.test_coverage"
                     )
                 continue
-            seed = int(m.get("seed", 42))
+            seed = int(m["seed"])
             mazes.setdefault(m.get("paradigm", cohort_dir.parent.name), {})[seed] = m
     order = [p for p in maze_order if p in mazes] + [
         p for p in sorted(mazes) if p not in maze_order

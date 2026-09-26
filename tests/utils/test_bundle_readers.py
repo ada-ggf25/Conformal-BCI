@@ -152,8 +152,8 @@ def test_operating_curves_are_matched_by_target():
     assert oc["size_over_k"] == pytest.approx([2.0 / 8, 5.0 / 8])
 
 
-def test_loader_reads_seed_directories_and_falls_back_to_a_single_bundle(tmp_path):
-    """Per-seed bundles are keyed by seed; a maze without seed dirs keeps its one bundle."""
+def test_loader_reads_seed_directories_and_ignores_a_pre_chain_bundle(tmp_path):
+    """Per-seed bundles are keyed by seed; a bundle directly under ALL_MICE/ is not read."""
     for seed in (43, 42):
         d = tmp_path / "More_Water" / "ALL_MICE" / f"seed_{seed}"
         d.mkdir(parents=True)
@@ -164,9 +164,8 @@ def test_loader_reads_seed_directories_and_falls_back_to_a_single_bundle(tmp_pat
         json.dumps({**_section_bundle(), "paradigm": "Y_Maze"})
     )
     mazes, order = load_maze_bundles(tmp_path)
-    assert order == ["More_Water", "Y_Maze"]
+    assert order == ["More_Water"]
     assert sorted(mazes["More_Water"]) == [42, 43]
-    assert list(mazes["Y_Maze"]) == [42]
 
 
 def _ev(covered, size, error, level):
