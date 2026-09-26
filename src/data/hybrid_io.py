@@ -190,52 +190,6 @@ def trial_water_position(
     return mode
 
 
-def extract_positions_hybrid(
-    db: Database,
-    session_name: str,
-    bin_width_sec: float = BIN_WIDTH_SEC,
-) -> np.ndarray | None:
-    """Bin-averaged Y positions for a session, without binning any spikes.
-
-    Returns:
-        (n_bins_total,) float64 Y positions, or ``None`` if no usable trials.
-    """
-    date_id = session_name_to_date_id(db, session_name)
-    trial_ids = [
-        t["_id"]
-        for t in db["trials"]
-        .find({"date_db_id": date_id})
-        .sort("trial_start_neural_data", 1)
-    ]
-
-    all_y: list[np.ndarray] = []
-    for trial_id in trial_ids:
-        doc = db["trials"].find_one({"_id": trial_id})
-        n_bins = _trial_bin_count(doc, bin_width_sec)
-        if n_bins is None:
-            continue
-        if not get_neural(db, trial_id):
-            continue
-        bdata = get_behavior(db, trial_id)
-        if not bdata:
-            continue
-        _x_col, y_col = _xy_columns(bdata)
-        if y_col is None or _x_col is None:
-            continue
-
-        y_data = np.array(bdata[y_col])
-        behavior_bin_size = len(y_data) / n_bins
-        trial_y = np.zeros(n_bins)
-        for i in range(n_bins):
-            start_idx = int(i * behavior_bin_size)
-            end_idx = min(int((i + 1) * behavior_bin_size), len(y_data))
-            if start_idx < end_idx:
-                trial_y[i] = np.nanmean(y_data[start_idx:end_idx])
-        all_y.append(trial_y)
-
-    return np.concatenate(all_y) if all_y else None
-
-
 def extract_neural_and_position_hybrid(
     db: Database,
     session_name: str,

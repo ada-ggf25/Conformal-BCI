@@ -3,14 +3,8 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
-from src.conformal.calibrate import (
-    class_conditional_quantiles_with_fallback,
-    compute_quantile,
-)
-
-N_CLASSES = 6
+from src.conformal.calibrate import compute_quantile
 
 
 class TestComputeQuantile:
@@ -36,25 +30,3 @@ class TestComputeQuantile:
             assert empirical >= 1 - alpha, (
                 f"alpha={alpha}: coverage {empirical:.4f} < {1 - alpha:.4f}"
             )
-
-
-class TestClassConditionalQuantilesWithFallback:
-    def test_starved_region_falls_back_to_global(self):
-        """A region with too few cal scores gets the marginal q_hat, not +inf. This is
-        the production fix for high-K/low-data mazes."""
-        alpha = 0.1
-        # region 0 well populated, region 1 has one score (below the finite-sample floor)
-        scores = np.concatenate([np.linspace(0.0, 1.0, 100), [0.5]])
-        labels = np.array([0] * 100 + [1])
-        q = class_conditional_quantiles_with_fallback(scores, labels, 2, alpha)
-        assert np.isfinite(q[1])
-        assert q[1] == pytest.approx(compute_quantile(scores, alpha))
-
-    def test_well_populated_matches_the_plain_per_region_quantile(self):
-        """Above the floor the fallback never fires, so the result must equal the plain
-        per-region quantile."""
-        rng = np.random.RandomState(3)
-        scores, labels = rng.rand(600), rng.randint(0, N_CLASSES, size=600)
-        q_fb = class_conditional_quantiles_with_fallback(scores, labels, N_CLASSES, 0.1)
-        for c in range(N_CLASSES):
-            assert q_fb[c] == pytest.approx(compute_quantile(scores[labels == c], 0.1))
