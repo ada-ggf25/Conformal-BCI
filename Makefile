@@ -2,7 +2,7 @@ PAPER := paper
 
 .PHONY: setup setup-all setup-python setup-docs setup-latex \
 	paper-test \
-	data-test utils-test models-test conformal-test \
+	data-test utils-test models-test conformal-test chain-test \
 	src-test docs-test \
 	mkdocs-test mkdocs-build mkdocs-serve \
 	db-test python-lint python-typecheck ci-test \
@@ -64,7 +64,7 @@ mkdocs-serve:
 # Source unit tests.
 src-test:
 	uv run pytest tests/data/ tests/utils/ tests/models/ \
-	  tests/conformal/ tests/db/ -v -m "not integration"
+	  tests/conformal/ tests/chain/ tests/db/ -v -m "not integration"
 
 data-test:
 	uv run pytest tests/data/ -v
@@ -78,6 +78,9 @@ models-test:
 conformal-test:
 	uv run pytest tests/conformal/ -v
 
+chain-test:
+	uv run pytest tests/chain/ -v
+
 db-test:
 	uv run pytest tests/db/ -v -m "not integration"
 
@@ -87,7 +90,7 @@ python-lint:
 	uv run ruff format --check src/ tests/ analyses/
 
 python-typecheck:
-	uv run mypy src/ tests/data tests/utils tests/models tests/conformal tests/db tests/docs analyses/
+	uv run mypy src/ tests/data tests/utils tests/models tests/conformal tests/chain tests/db tests/docs analyses/
 
 # Experimental analysis run.
 # These need .env + a live MongoDB connection and train models:
