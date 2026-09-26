@@ -28,39 +28,34 @@ SIGNALS = ("entropy", "variance", "align_jacobian", "enc_jacobian")
 """Canonical order of the four per-window uncertainty signals the learned scale reads."""
 
 
-def compute_window_signals(
+def window_signals(
     step1_model: SharedTemporalClassifier,
     alignment_decoder: AlignmentDecoder,
-    session_data: dict,
-    valid_sessions: list[str],
     *,
+    session: str,
+    windows: np.ndarray,
+    latents: np.ndarray,
+    logvar: np.ndarray,
+    probs: np.ndarray,
+    idx: np.ndarray,
     seq_len: int,
     device: torch.device,
-) -> None:
-    """Compute the four uncertainty signals per window and store them per session."""
-    for s in valid_sessions:
-        d = session_data[s]
-        n = len(d["regions"])
+) -> np.ndarray:
+    """The four signals (``SIGNALS`` order) for the windows ``idx`` of one session.
 
-        # 1. entropy
-        probs = d["probs"].astype(np.float64)
-        ent = -(probs * np.log(np.clip(probs, 1e-10, 1.0))).sum(axis=1)
+    ``windows``, ``latents``, ``logvar`` and ``probs`` are the session's full per-window arrays:
+    the alignment Jacobian reads each window's preceding latents as context.
 
-        # 2. posterior variance
-        var = np.exp(d["logvar"].astype(np.float64)).mean(axis=1)
-
-        # 3. alignment Jacobian
-        seqs = build_latent_sequences(d["step1_all_latents"], seq_len)
-        aj = compute_spectral_norms(alignment_decoder, seqs, device)
-
-        # 4. encoder Jacobian
-        ej = compute_encoder_spectral_norms(step1_model, d["windows"], s, device)
-
-        for name, v in zip(SIGNALS, (ent, var, aj, ej), strict=True):
-            assert len(v) == n, (
-                f"{s}: signal {name!r} has {len(v)} values for {n} windows"
-            )
-        d["signals"] = np.column_stack([ent, var, aj, ej]).astype(np.float64)
+    Returns:
+        (len(idx), 4) float64 array.
+    """
+    p = probs[idx].astype(np.float64)
+    ent = -(p * np.log(np.clip(p, 1e-10, 1.0))).sum(axis=1)
+    var = np.exp(logvar[idx].astype(np.float64)).mean(axis=1)
+    seqs = build_latent_sequences(latents, seq_len)[idx]
+    aj = compute_spectral_norms(alignment_decoder, seqs, device)
+    ej = compute_encoder_spectral_norms(step1_model, windows[idx], session, device)
+    return np.column_stack([ent, var, aj, ej]).astype(np.float64)
 
 
 @dataclass(frozen=True)

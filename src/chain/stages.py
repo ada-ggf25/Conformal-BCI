@@ -10,8 +10,12 @@ import torch
 from torch.utils.data import DataLoader
 
 from ..conformal.learned import ScaleNet, scale_of, train_scale
-from ..conformal.signals import SIGNALS, SignalStats, standardize_signals
-from ..conformal.strain import compute_encoder_spectral_norms, compute_spectral_norms
+from ..conformal.signals import (
+    SIGNALS,
+    SignalStats,
+    standardize_signals,
+    window_signals,
+)
 from ..data.datasets import (
     HybridClassificationDataset,
     LatentSequenceDataset,
@@ -28,7 +32,6 @@ from ..models.config import (
 )
 from ..models.encoder import SharedTemporalClassifier
 from ..models.latents import (
-    build_latent_sequences,
     extract_aligned_latents,
     extract_latents_hybrid,
     extract_logvar,
@@ -253,15 +256,18 @@ class ChainModel:
         self, s: str, d: dict, fw: dict[str, np.ndarray], idx: np.ndarray
     ) -> np.ndarray:
         """The four uncertainty signals (``SIGNALS`` order) for the windows ``idx``."""
-        p = fw["probs"][idx]
-        ent = -(p * np.log(np.clip(p, 1e-10, 1.0))).sum(axis=1)
-        var = np.exp(fw["logvar"][idx].astype(np.float64)).mean(axis=1)
-        seqs = build_latent_sequences(fw["latents"], STEP2_SEQ_LEN)[idx]
-        aj = compute_spectral_norms(self.dec, seqs, self.device)
-        ej = compute_encoder_spectral_norms(
-            self.step1, d["windows"][idx], s, self.device
+        return window_signals(
+            self.step1,
+            self.dec,
+            session=s,
+            windows=d["windows"],
+            latents=fw["latents"],
+            logvar=fw["logvar"],
+            probs=fw["probs"],
+            idx=idx,
+            seq_len=STEP2_SEQ_LEN,
+            device=self.device,
         )
-        return np.column_stack([ent, var, aj, ej]).astype(np.float64)
 
     def block(self, s: str, d: dict, idx: np.ndarray) -> dict[str, np.ndarray]:
         """Probabilities, raw signals and labels of the windows ``idx``, under the current model."""
