@@ -1,6 +1,6 @@
 # Conformal
 
-The `src.conformal` package implements the learned class-conditional split-conformal layer: the per-window uncertainty signals, the learned scale, the class-conditional quantiles, the prediction sets, and the evaluation diagnostics that read them.
+The `src.conformal` package implements the learned class-conditional split-conformal layer: the per-window uncertainty signals, the learned scale, the conformal quantile, the prediction sets, and the decoder-error correlations. The per-region thresholds of the session chain live in `src.chain`.
 
 ## Uncertainty signals
 
@@ -21,10 +21,6 @@ The `src.conformal` package implements the learned class-conditional split-confo
 ## Prediction sets
 
 ::: src.conformal.predict
-
-## Conformal evaluation
-
-::: src.conformal.evaluate
 
 ## Decoder error evaluation
 

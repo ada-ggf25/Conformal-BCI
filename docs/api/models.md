@@ -22,10 +22,6 @@ The `src.models` package implements the two-step encoding-decoding pipeline: a B
 
 ::: src.models.latents
 
-## Decoder metrics
-
-::: src.models.metrics
-
 ## Hyperparameters
 
 ::: src.models.config

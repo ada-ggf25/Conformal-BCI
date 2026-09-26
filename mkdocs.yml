@@ -80,6 +80,7 @@ nav:
     - Database: api/db.md
     - Utilities: api/utils.md
     - Conformal: api/conformal.md
+    - Chain: api/chain.md
 
 validation:
   anchors: warn
