@@ -8,16 +8,17 @@ The notebook runs once per (seed, maze), injecting ``TARGET_PARADIGM``, ``SEED``
 Each run renders the executed notebook and writes the results bundle to
 ``analyses/artifacts/<Paradigm>/ALL_MICE/seed_<SEED>/``. Runs go seed by seed (every maze for
 the first seed, then the next seed), so a partial sweep is already a complete set of mazes.
-A (seed, maze) whose bundle already exists is skipped, so an interrupted sweep resumes where it
-stopped; ``--force`` reruns it. ``--quick`` writes to ``analyses/artifacts/_quick/`` instead, so
-a smoke run never stands in for a real bundle.
+A (seed, maze) whose bundle already exists is skipped, and an interrupted (seed, maze) resumes
+from the chain checkpoint the notebook writes after every session; ``--force`` reruns it from
+scratch. ``--quick`` writes to ``analyses/artifacts/_quick/`` instead, so a smoke run never
+stands in for a real bundle.
 
 Examples:
     uv sync                                                          # installs papermill
     make maze                                                        # all 3 mazes, 5 seeds
     make maze PARADIGM=Y_Maze SEEDS="42 43"                          # one maze, two seeds
     uv run python analyses/run_mazes.py --paradigm More_Water Y_Maze # several mazes, in order
-    uv run python analyses/run_mazes.py --quick                      # 2/2-epoch smoke test
+    uv run python analyses/run_mazes.py --quick                      # 2-epoch smoke test
 """
 
 from __future__ import annotations
@@ -117,7 +118,7 @@ def main() -> int:
     ap.add_argument(
         "--quick",
         action="store_true",
-        help="smoke run: 2/2 model epochs and a 5-epoch conformal scale, "
+        help="smoke run: 2-epoch models, a 5-epoch sigma and a 2-point coverage sweep, "
         "written under analyses/artifacts/_quick/",
     )
     ap.add_argument(
@@ -130,7 +131,13 @@ def main() -> int:
     seeds = args.seeds or (DEFAULT_SEEDS[:1] if args.quick else DEFAULT_SEEDS)
     root = QUICK_ARTIFACTS if args.quick else ARTIFACTS
     quick: dict = (
-        dict(STEP1_EPOCHS=2, STEP2_EPOCHS=2, MLP_EPOCHS=5, MLP_EARLY_STOP_PATIENCE=3)
+        dict(
+            STEP_EPOCHS=2,
+            EARLY_STOP_PATIENCE=2,
+            MLP_EPOCHS=5,
+            MLP_EARLY_STOP_PATIENCE=3,
+            QUICK_SWEEP=True,
+        )
         if args.quick
         else {}
     )
@@ -145,6 +152,8 @@ def main() -> int:
                 skipped.append(tag)
                 continue
             print(f"\n=== {tag} ===")
+            if args.force:  # start over, not from an interrupted run's checkpoint
+                (out_dir / "checkpoint.pt").unlink(missing_ok=True)
             try:
                 run_one(
                     pg,
