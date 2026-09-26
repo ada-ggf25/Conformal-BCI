@@ -126,3 +126,15 @@ def test_chronological_split_requires_groups():
     z, p, y = _signals(64), _probs(64), _labels(64)
     with pytest.raises(ValueError, match="groups"):
         train_scale(z, p, y, epochs=1, split="chronological", device="cpu")
+
+
+def test_init_net_continues_from_a_trained_net_without_mutating_it():
+    """Zero epochs from init_net returns init_net's function; the passed net is not trained."""
+    z, p, y = _signals(128), _probs(128), _labels(128)
+    base, _ = train_scale(z, p, y, epochs=5, seed=0, device="cpu")
+    before = scale_of(base, z)
+    same, _ = train_scale(z, p, y, epochs=0, init_net=base, seed=0, device="cpu")
+    np.testing.assert_array_equal(scale_of(same, z), before)
+    moved, _ = train_scale(z, p, y, epochs=5, init_net=base, seed=1, device="cpu")
+    np.testing.assert_array_equal(scale_of(base, z), before)
+    assert not np.array_equal(scale_of(moved, z), before)

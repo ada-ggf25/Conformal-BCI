@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import Any
 
@@ -197,6 +198,7 @@ def train_scale(
     split: str = "random",
     groups: np.ndarray | None = None,
     val_groups: np.ndarray | None = None,
+    init_net: ScaleNet | None = None,
     seed: int = 0,
     device: str = "cpu",
 ) -> tuple[ScaleNet, TrainReport]:
@@ -222,6 +224,8 @@ def train_scale(
         groups:      (n,) group id per fitting row (the session), needed by the chronological
                      split. Rows must be in chronological order within each group.
         val_groups:  the same for the early-stopping rows.
+        init_net:    a trained net to continue from (fine-tuning); a copy is trained, the
+                     argument is left untouched. ``None`` starts at sigma = 1.
 
     Returns:
         (net, report). ``report.collapsed_to_standard`` is True when the net never left σ = 1,
@@ -255,7 +259,10 @@ def train_scale(
     P = torch.as_tensor(np.asarray(probs), dtype=torch.float32, device=dev)
     Y = torch.as_tensor(np.asarray(labels), dtype=torch.long, device=dev)
 
-    net = ScaleNet(X.shape[1], hidden=hidden, depth=depth).to(dev)
+    if init_net is None:
+        net = ScaleNet(X.shape[1], hidden=hidden, depth=depth).to(dev)
+    else:
+        net = copy.deepcopy(init_net).to(dev)
     opt = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=weight_decay)
 
     n_cls = n_classes if n_classes is not None else int(P.shape[1])
