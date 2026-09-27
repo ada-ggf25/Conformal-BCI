@@ -65,16 +65,24 @@ target-version = "py312"
 line-length = 88
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "SIM", "TC", "RUF", "FURB"]
+select = ["E", "F", "I", "B", "UP", "SIM", "TC", "RUF", "FURB", "D"]
 extend-ignore = [
     "RUF012",  # noisy in test fixtures
     "RUF001",  # for mathematical notation
     "RUF002",  # for mathematical notation
     "RUF003",  # for mathematical notation
+    "D107",    # __init__ args live in the class docstring (mkdocstrings merge_init_into_class)
 ]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"  # what mkdocstrings parses (docstring_style: google in mkdocs.yml)
 
 [tool.ruff.lint.per-file-ignores]
 "analyses/**/*.ipynb" = ["E402"]
+"analyses/**" = ["D"]
+# Tests: every module, class and function needs a docstring (D1), but their one-sentence
+# summaries may wrap without the Google layout rules the rendered API docs need.
+"tests/**" = ["D2", "D3", "D4"]
 
 [tool.ruff.lint.pycodestyle]
 max-line-length = 100
