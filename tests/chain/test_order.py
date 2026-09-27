@@ -1,14 +1,19 @@
 """Tests for src/chain/order.py.
 
-Accepted gaps: ``prepare_chain`` is orchestration (order, re-split, then the train-only
-normalization already tested in tests/utils/test_pipeline_prep.py).
+Accepted gaps: none.
 """
 
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from src.chain.order import chain_order, first_session_flags, resplit_warmup
+from src.chain.order import (
+    chain_order,
+    first_session_flags,
+    prepare_chain,
+    resplit_warmup,
+)
 
 
 def test_chain_is_calendar_order_with_ties_broken_by_mouse():
@@ -35,3 +40,48 @@ def test_first_session_of_each_mouse_is_flagged_once():
     chain = ["M1_1", "M2_1", "M1_2", "M3_1", "M2_2"]
     mouse = {s: s.split("_")[0] for s in chain}
     assert first_session_flags(chain, mouse) == [True, True, False, True, False]
+
+
+def test_warmup_resplit_keeps_only_task_windows():
+    """Non-task windows (never in any block) stay out after the re-split."""
+    d = {
+        "train_idx": np.array([0, 2, 4]),
+        "val_idx": np.array([6]),
+        "test_idx": np.array([8]),
+    }
+    resplit_warmup(d, 0.6)
+    assert d["train_idx"].tolist() == [0, 2, 4] and d["val_idx"].tolist() == [6, 8]
+
+
+def test_prepare_chain_resplits_warmup_before_normalizing():
+    """The warm-up session's z-scoring uses its new 70% train block (six 0s and a 1), not the
+    original 6-window one; a tested session keeps its split and is z-scored on it."""
+
+    def session(values, tr, va, te):
+        """One neuron, T = 1, the given per-window values and blocks."""
+        return {
+            "windows": np.array(values, dtype="float32")[:, None, None],
+            "train_idx": np.array(tr), "val_idx": np.array(va), "test_idx": np.array(te),
+        }  # fmt: skip
+
+    data = {
+        "M1_240102": session(
+            [0.0] * 6 + [1.0, 10.0, 10.0, 10.0], range(6), [6, 7, 8], [9]
+        ),
+        "M1_240101": session(
+            [0.0] * 6 + [1.0, 10.0, 10.0, 10.0], range(6), [6, 7, 8], [9]
+        ),
+    }
+    chain = prepare_chain(data, ["M1_240102", "M1_240101"], n_warmup=1)
+    assert chain == ["M1_240101", "M1_240102"]
+    warm, tested = data["M1_240101"], data["M1_240102"]
+    assert warm["train_idx"].tolist() == list(range(7)) and len(warm["test_idx"]) == 0
+    assert tested["train_idx"].tolist() == list(range(6))
+    assert tested["test_idx"].tolist() == [9]
+    # warm-up train block (0 x6, 1) has mean 1/7: its zeros sit below 0, the 10s far above
+    w = warm["windows"][:, 0, 0]
+    assert w[:6].max() < 0 < w[6] < w[7]
+    # the tested session's train block is all zeros: its std is only the 1e-3 guard
+    assert tested["windows"][:6].max() == 0.0
+    assert tested["windows"][9, 0, 0] == pytest.approx(10_000.0, rel=1e-4)
+    assert "windows_raw" in warm and warm["windows_raw"][9, 0, 0] == 10.0
