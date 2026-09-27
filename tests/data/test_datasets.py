@@ -35,6 +35,8 @@ def _session(offset: float, n: int = 6, with_raw: bool = True) -> dict:
 
 
 class TestHybridClassificationDataset:
+    """Step 1 samples: the right split rows, sessions and targets."""
+
     def test_only_the_requested_split_rows_are_used(self):
         """Every sample is a row of the chosen split, paired with that row's own region."""
         ds = HybridClassificationDataset({"A": _session(0.0)}, index_key="val_idx")
@@ -82,6 +84,8 @@ def test_collate_groups_samples_by_session_in_arrival_order():
 
 
 class TestLatentSequenceDataset:
+    """Step 2 sequences: padding, context, and the labels paired with them."""
+
     @staticmethod
     def _data():
         """Two sessions of scalar latents 0..4 and 10..14 (latent_dim = 1)."""
