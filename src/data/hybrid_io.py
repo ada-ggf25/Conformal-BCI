@@ -262,6 +262,7 @@ def extract_neural_and_position_hybrid(
     session_name: str,
     session_config: dict,
     bin_width_sec: float = BIN_WIDTH_SEC,
+    water_min_share: float = LINEAR_WATER_MIN_SHARE,
 ) -> tuple:
     """Extract binned spike counts, X/Y position and the water position for a whole session.
 
@@ -280,6 +281,7 @@ def extract_neural_and_position_hybrid(
         session_config: the session's entry from ``build_hybrid_neuron_mapping``; it fixes
                         the column of every neuron.
         bin_width_sec:  time bin width in seconds.
+        water_min_share: ``trial_water_position``'s minimum share for a trial's water.
 
     Returns:
         (neural, x, y, water) where:
@@ -349,7 +351,7 @@ def extract_neural_and_position_hybrid(
                 trial_x[i] = np.nanmean(x_data[start_idx:end_idx])
                 trial_y[i] = np.nanmean(y_data[start_idx:end_idx])
 
-        water = trial_water_position(bdata)
+        water = trial_water_position(bdata, water_min_share)
         all_neural.append(trial_neural)
         all_x.append(trial_x)
         all_y.append(trial_y)

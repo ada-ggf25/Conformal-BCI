@@ -17,7 +17,12 @@ if TYPE_CHECKING:
 
     from pymongo.database import Database
 
-from ..data.config import BIN_WIDTH_SEC, MIN_NEURONS_PER_SESSION, WINDOW_SIZE
+from ..data.config import (
+    BIN_WIDTH_SEC,
+    LINEAR_WATER_MIN_SHARE,
+    MIN_NEURONS_PER_SESSION,
+    WINDOW_SIZE,
+)
 from ..data.hybrid_io import (
     build_hybrid_neuron_mapping,
     create_windows_with_regions,
@@ -38,6 +43,7 @@ def assemble_session_data(
     test_frac: float = 0.10,
     min_windows: int = 20,
     min_classes: int = 2,
+    water_min_share: float = LINEAR_WATER_MIN_SHARE,
 ) -> tuple[dict, list[str], dict, list[str], int]:
     """Extract, window, label, and split neural data for each session.
 
@@ -56,6 +62,8 @@ def assemble_session_data(
         test_frac:    fraction for coverage evaluation (default 0.10)
         min_windows:  sessions with fewer task windows are dropped (default 20)
         min_classes:  sessions with fewer unique region classes are dropped (default 2)
+        water_min_share: Linear maze: a trial keeps its water position only when the modal
+                      value covers at least this share of its samples (default 0.8).
 
     Returns:
         ``(session_data, valid_sessions, session_configs, shared_neuron_ids, n_shared)``.
@@ -79,7 +87,9 @@ def assemble_session_data(
             continue
 
         neural_data, x_positions, y_positions, water = (
-            extract_neural_and_position_hybrid(db, session_name, config, BIN_WIDTH_SEC)
+            extract_neural_and_position_hybrid(
+                db, session_name, config, BIN_WIDTH_SEC, water_min_share
+            )
         )
         if neural_data is None:
             continue

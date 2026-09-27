@@ -187,7 +187,7 @@ def _assemble(sessions, *, min_windows=20, min_classes=2):
     ylevel = {0: 0.0, 1: 2000.0, 4: 3000.0}  # Y-maze: R0, R1, R4 at x = 0
     configs = {s: {"n_total": v[0]} for s, v in sessions.items()}
 
-    def extract(_db, s, _cfg, _bw):
+    def extract(_db, s, _cfg, _bw, _water_min_share):
         """Extracted bins for session s, or Nones when it has no windows."""
         _n, n_win, labels, *_ = sessions[s]
         if n_win == 0:
