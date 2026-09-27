@@ -499,11 +499,11 @@ def window_region_labels(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Per-window region labels with a choice of temporal reduction over the bins.
 
-    This helper classifies every bin in the window and reduces:
+    This helper classifies every bin in the window, then reduces the bin labels to one:
 
-      reduce="last":  last-bin label: identical to create_windows_with_regions.
-      reduce="mode":  modal (most frequent) region across the window's bins; a tie goes
-                      to the smallest label.
+    - ``reduce="last"``: the last bin's label, identical to ``create_windows_with_regions``.
+    - ``reduce="mode"``: the modal (most frequent) region across the window's bins; a tie
+      goes to the smallest label.
 
     Args:
         x_positions: (n_bins,) X coordinates.
