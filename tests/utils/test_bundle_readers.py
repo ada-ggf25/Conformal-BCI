@@ -1,4 +1,10 @@
-"""Tests for src/utils/bundle_readers.py."""
+"""Tests for src/utils/bundle_readers.py.
+
+Bundles are built by hand (or written by ``build_chain_bundle`` and read back), so every
+expected number is worked out from the values put in.
+
+Accepted gaps: none.
+"""
 
 from __future__ import annotations
 
@@ -15,11 +21,16 @@ from src.utils.bundle_readers import (
     maze_summary_table,
     mean_sd,
     method_table,
+    n_mice,
+    operating_curves,
     per_region_coverage_table,
+    per_session_table,
+    region_distribution,
     seed_method_table,
     seed_operating_curves,
     seed_per_session_table,
     seed_session_coverage,
+    seed_values,
     whole_test_coverage,
 )
 
@@ -277,3 +288,216 @@ def test_per_session_table_matches_sessions_by_name_in_chain_order():
     assert t["coverage"] == pytest.approx([0.7, 0.9])
     assert t["accuracy"] == pytest.approx([0.5, 0.3])
     assert t["first_of_mouse"] == [True, False]
+
+
+# --------------------------------------------------------------------------- single-bundle readers
+
+
+def test_n_mice_counts_distinct_mouse_prefixes():
+    """Three sessions of two mice is two mice; a bundle with no sessions has none."""
+    assert n_mice(_section_bundle()) == 2
+    assert n_mice({}) == 0
+
+
+def test_region_distribution_is_sorted_and_normalized():
+    """Counts are ordered by region number and divided by their total."""
+    r = region_distribution(_section_bundle())
+    assert r["regions"] == [0, 1, 2] and r["counts"] == [60, 10, 30]
+    assert r["fraction"] == pytest.approx([0.6, 0.1, 0.3])
+
+
+def test_region_distribution_with_no_windows_is_nan():
+    """A zero total gives NaN fractions, not a division error or zeros."""
+    r = region_distribution({"class_counts": {"0": 0, "1": 0}})
+    assert np.isnan(r["fraction"]).all()
+
+
+def test_operating_curve_is_sorted_by_coverage_and_normalized_by_k():
+    """The frontier is drawn left to right in coverage; sizes are divided by K."""
+    b = _section_bundle()
+    b["conformal"]["retrain_sweep"] = {
+        "learned": [
+            {"target": 0.9, "coverage": 0.85, "size": 6.0},
+            {"target": 0.5, "coverage": 0.45, "size": 2.0},
+        ]
+    }
+    oc = operating_curves(b)
+    assert oc["coverage"] == [0.45, 0.85] and oc["target"] == [0.5, 0.9]
+    assert oc["size_over_k"] == pytest.approx([0.25, 0.75])
+    assert oc["coverage_target"] == pytest.approx(0.9) and oc["n_classes"] == 8
+
+
+def test_operating_curve_without_a_class_count_has_nan_sizes():
+    """Without K the normalized size is undefined, and an absent sweep is empty."""
+    b = {
+        "conformal": {
+            "retrain_sweep": {"learned": [{"target": 0.9, "coverage": 1, "size": 2}]}
+        }
+    }
+    assert np.isnan(operating_curves(b)["size_over_k"][0])
+    assert operating_curves({})["coverage"] == []
+
+
+def test_deployed_point_without_the_arm_is_nan():
+    """A bundle missing the deployed arm reports NaN size, never 0."""
+    b = _section_bundle()
+    del b["conformal"]["arms"]
+    assert np.isnan(deployed_operating_point(b)["size_over_k"])
+    assert deployed_operating_point(_section_bundle())["size_over_k"] == pytest.approx(
+        0.5
+    )
+
+
+def test_sessions_below_target_is_recounted_when_not_stored():
+    """Older bundles lack the stored count; it is then the per-session misses."""
+    b = _section_bundle()
+    del b["conformal"]["test_coverage"]["n_sessions_below_target"]
+    b["conformal"]["test_coverage"]["per_session"].append({"coverage": 0.5})
+    w = whole_test_coverage(b)
+    assert w["n_sessions_below"] == 2  # one stored False, one missing flag
+    assert w["per_session_meets"] == [True, False, False]
+
+
+def test_empty_bundle_reads_as_nan_not_zero():
+    """A bundle with no conformal section reads NaN coverage and the default 90% target."""
+    w = whole_test_coverage({})
+    assert np.isnan(w["coverage"]) and w["n_windows"] == 0 and w["target"] == 0.9
+
+
+def test_per_region_size_is_none_where_not_reported():
+    """A region with no size keeps None rather than a fake 0."""
+    assert per_region_coverage_table(_section_bundle())["size_over_k"][1:] == [
+        None,
+        None,
+    ]
+
+
+def test_method_and_session_tables_default_to_empty():
+    """A bundle without the chain sections yields empty tables."""
+    assert method_table({}) == {} and per_session_table({}) == []
+    assert method_table(_seed_bundle(0.8, []), "first") == {}
+
+
+def test_error_correlations_need_saved_arrays():
+    """Without arrays.npz there is nothing to correlate."""
+    assert error_correlations_for_bundle(_section_bundle()) is None
+
+
+# --------------------------------------------------------------------------- seed aggregation
+
+
+def test_seed_values_are_in_seed_order_and_drop_none():
+    """Values come out sorted by seed; a reader returning None for a seed is skipped."""
+    runs = {44: {"v": 3}, 42: {"v": 1}, 43: {"v": None}}
+    assert seed_values(runs, lambda b: b["v"]) == [1, 3]
+
+
+def test_mean_sd_of_nothing_is_nan():
+    """No seeds at all gives a NaN mean and sd."""
+    mean, sd = mean_sd([])
+    assert np.isnan(mean).all() and np.isnan(sd).all()
+
+
+def test_mean_sd_of_scalars_matches_numpy():
+    """For plain scalars it is the ordinary mean and sample sd."""
+    mean, sd = mean_sd([1.0, 2.0, 6.0])
+    assert mean[0] == pytest.approx(3.0)
+    assert sd[0] == pytest.approx(np.std([1.0, 2.0, 6.0], ddof=1))
+
+
+def test_maze_summary_skips_unknown_mazes():
+    """A maze named in the order but not loaded produces no row."""
+    rows = maze_summary_table(
+        {"Y_Maze": {1: _section_bundle()}}, ["Nested_All", "Y_Maze"]
+    )
+    assert [r["maze"] for r in rows] == ["Y_Maze"]
+
+
+def test_method_missing_from_one_seed_is_averaged_over_the_others():
+    """A method only one seed ran is reported from that seed, with no spread."""
+    a, b = _seed_bundle(0.8, []), _seed_bundle(0.9, [])
+    del b["conformal"]["methods"]["all"]["fresh"]
+    t = seed_method_table({42: a, 43: b})
+    assert t["fresh"]["coverage"][0] == pytest.approx(0.8)
+    assert np.isnan(t["fresh"]["coverage"][1])
+
+
+def test_seed_method_table_of_bundles_without_methods_is_empty():
+    """Pre-chain bundles have no method table to aggregate."""
+    assert seed_method_table({42: _section_bundle()}) == {}
+
+
+def test_a_session_missing_from_one_seed_counts_as_missing():
+    """A session absent from a seed is averaged over the seeds that have it."""
+    a = [("M1_1", 0.8, 0.5, True), ("M2_1", 1.0, 0.7, False)]
+    runs = {42: _seed_bundle(0.8, a), 43: _seed_bundle(0.8, a[:1])}
+    t = seed_per_session_table(runs)
+    assert t["coverage"] == pytest.approx([0.8, 1.0])
+    assert t["coverage_sd"][0] == pytest.approx(0.0) and np.isnan(t["coverage_sd"][1])
+    assert t["n_neurons"] == [9, 9] and t["target"] == pytest.approx(0.9)
+
+
+def test_a_sweep_target_missing_from_one_seed_is_not_zero():
+    """A target one seed lacks is averaged over the seeds that swept it."""
+    b1, b2 = _section_bundle(), _section_bundle()
+    b1["conformal"]["retrain_sweep"] = {
+        "learned": [{"target": 0.5, "coverage": 0.4, "size": 2.0},
+                    {"target": 0.9, "coverage": 0.8, "size": 4.0}]
+    }  # fmt: skip
+    b2["conformal"]["retrain_sweep"] = {
+        "learned": [{"target": 0.9, "coverage": 0.9, "size": 4.0}]
+    }
+    oc = seed_operating_curves({42: b1, 43: b2})
+    assert oc["coverage"] == pytest.approx([0.4, 0.85])
+
+
+def test_operating_curves_without_any_sweep_are_empty():
+    """No seed swept anything: the curve is empty."""
+    oc = seed_operating_curves({42: _section_bundle()})
+    assert oc["target"] == [] and oc["coverage"] == []
+
+
+# --------------------------------------------------------------------------- loading
+
+
+def _write(path, bundle):
+    """Write one metrics.json under path, creating it."""
+    path.mkdir(parents=True)
+    (path / "metrics.json").write_text(json.dumps(bundle))
+
+
+def test_loader_skips_incomplete_bundles_and_orders_mazes(tmp_path):
+    """A bundle without test coverage is skipped with a message; mazes follow the preferred
+    order, then any others alphabetically."""
+    _write(tmp_path / "Z" / "ALL_MICE" / "seed_1", {**_section_bundle(), "paradigm": "Zeta",
+                                                    "seed": 1})  # fmt: skip
+    _write(tmp_path / "A" / "ALL_MICE" / "seed_1", {**_section_bundle(), "paradigm": "Alpha",
+                                                    "seed": 1})  # fmt: skip
+    _write(tmp_path / "Y" / "ALL_MICE" / "seed_1", {**_section_bundle(), "paradigm": "Y_Maze",
+                                                    "seed": 1})  # fmt: skip
+    _write(tmp_path / "Y" / "ALL_MICE" / "seed_2", {"paradigm": "Y_Maze", "seed": 2,
+                                                    "conformal": {}})  # fmt: skip
+    logs: list[str] = []
+    mazes, order = load_maze_bundles(tmp_path, log_fn=logs.append)
+    assert order == ["Y_Maze", "Alpha", "Zeta"]
+    assert list(mazes["Y_Maze"]) == [1]
+    assert len(logs) == 1 and "seed_2" in logs[0]
+    assert load_maze_bundles(tmp_path)[1] == order  # the log sink is optional
+
+
+def test_loader_records_which_sidecar_files_exist(tmp_path):
+    """The arrays and sigma-net paths are attached only when those files were saved."""
+    d = tmp_path / "Y_Maze" / "ALL_MICE" / "seed_42"
+    _write(d, {**_section_bundle(), "seed": 42})
+    (d / "arrays.npz").write_bytes(b"")
+    b = load_maze_bundles(tmp_path)[0]["More_Water"][42]
+    assert b["_arrays_path"] == d / "arrays.npz"
+    assert b["_sigma_nets_path"] is None
+
+
+def test_paradigm_falls_back_to_the_directory_name(tmp_path):
+    """A bundle without a paradigm field is filed under its directory."""
+    b = {**_section_bundle(), "seed": 3}
+    del b["paradigm"]
+    _write(tmp_path / "Y_Maze" / "ALL_MICE" / "seed_3", b)
+    assert list(load_maze_bundles(tmp_path)[0]) == ["Y_Maze"]
