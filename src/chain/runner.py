@@ -70,6 +70,7 @@ def run_chain(
     checkpoint: Path | None = None,
     log: Callable[[str], None] = print,
     stop_after: int | None = None,
+    training_log: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Train the chain session by session and evaluate every session after the warm-up.
 
@@ -90,6 +91,9 @@ def run_chain(
         checkpoint:   file to save after every session and resume from if it exists.
         log:          progress sink.
         stop_after:   stop once this many sessions are done (for interrupting in tests).
+        training_log: if given, receives one entry per trained session (warm-up included):
+                      ``{"session", "warmup", "step1", "step2", "sigma"}`` with the training
+                      curves of ``ChainModel.history``. Kept in the checkpoint across a resume.
 
     Returns:
         One row per tested session (see ``_evaluate_session``).
@@ -104,6 +108,8 @@ def run_chain(
         state = torch.load(checkpoint, map_location=device, weights_only=False)
         model.load(state["model"], configs)
         rows, start = state["rows"], state["next"]
+        if training_log is not None:
+            training_log[:] = state.get("training", [])
         torch.set_rng_state(state["torch_rng"])
         np.random.set_state(state["np_rng"])
         log(f"resumed at session {start + 1}/{len(chain)}")
@@ -122,6 +128,10 @@ def run_chain(
             alpha=cfg.alpha,
             seed=cfg.seed,
         )
+        if training_log is not None:
+            training_log.append(
+                {"session": s, "warmup": i < cfg.warmup, **model.history}
+            )
         if i >= cfg.warmup:
             past = chain[max(0, i - max_past) : i]
             row = _evaluate_session(
@@ -138,7 +148,7 @@ def run_chain(
         else:
             log(f"[{i + 1}/{len(chain)}] {s}  warm-up")
         if checkpoint is not None:
-            _save(checkpoint, i + 1, model, rows)
+            _save(checkpoint, i + 1, model, rows, training_log)
         if stop_after is not None and i + 1 >= stop_after:
             break
     return rows
@@ -180,7 +190,10 @@ def _evaluate_session(
         The session's row: identity and sizes, the test labels, relative sigma and
         signals, ``methods`` (``evaluate_block`` output per method: ``chain_<rule>`` for
         every rule, ``chain_sigma1``, and ``fresh`` with the baseline), ``sweep`` (coverage
-        and size per target), and the deployed sigma's weights and signal stats.
+        and size per target), the deployed sigma's weights and signal stats, the test
+        windows' ``probs`` and raw ``sigma``, and ``calibration``: the deployed model's
+        calibration blocks (``offset`` 0 is the session's own, ``k`` is ``k`` sessions back),
+        each with ``labels``, ``scores`` and ``sigma``.
     """
     d = session_data[s]
     own_blk = model.block(s, d, d["val_idx"])
@@ -231,6 +244,15 @@ def _evaluate_session(
         methods["fresh"] = evaluate_block(f_test, q, levels, n_classes)
 
     deployed = model.score(test_blk)
+    # The deployed model's calibration scores (own block first, then the past blocks, newest
+    # first), kept so any calibration rule can be recomputed offline. With sigma stored,
+    # scores * sigma recovers 1 - p_y, i.e. the sigma = 1 scores.
+    calibration = [
+        {"offset": k, "session": name, **_kept(model.score(blk))}
+        for k, (name, blk) in enumerate(
+            [(s, own_blk), *zip(past_sessions[::-1], past_blks[::-1], strict=True)]
+        )
+    ]
     return {
         "session": s,
         "mouse": mouse_id,
@@ -240,12 +262,20 @@ def _evaluate_session(
         "n_test": len(d["test_idx"]),
         "labels": test_blk["labels"],
         "sigma_rel": deployed["sigma"] / np.median(deployed["sigma"]),
+        "sigma": deployed["sigma"],
+        "probs": deployed["probs"],
+        "calibration": calibration,
         "signals": test_blk["u"],
         "methods": methods,
         "sweep": sweep,
         "sigma_state": model.state()["sigma"],
         "signal_stats": model.state()["stats"],
     }
+
+
+def _kept(scored: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """The fields of a scored calibration block that the bundle keeps."""
+    return {k: scored[k] for k in ("labels", "scores", "sigma")}
 
 
 def _unit_scores(blk: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
@@ -266,7 +296,13 @@ def _unit_scores(blk: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     }
 
 
-def _save(path: Path, next_index: int, model: ChainModel, rows: list) -> None:
+def _save(
+    path: Path,
+    next_index: int,
+    model: ChainModel,
+    rows: list,
+    training: list | None = None,
+) -> None:
     """Write the checkpoint atomically (a crash mid-write keeps the previous one).
 
     Args:
@@ -274,6 +310,7 @@ def _save(path: Path, next_index: int, model: ChainModel, rows: list) -> None:
         next_index: chain position to resume from.
         model:      the chain model.
         rows:       rows of the sessions tested so far.
+        training:   the training log so far, if one is kept.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
@@ -282,6 +319,7 @@ def _save(path: Path, next_index: int, model: ChainModel, rows: list) -> None:
             "next": next_index,
             "model": model.state(),
             "rows": rows,
+            "training": training or [],
             "torch_rng": torch.get_rng_state(),
             "np_rng": np.random.get_state(),
         },

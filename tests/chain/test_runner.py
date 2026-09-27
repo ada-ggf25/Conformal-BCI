@@ -14,10 +14,13 @@ import numpy as np
 import pytest
 import torch
 
+from src.chain.evaluate import evaluate_block
 from src.chain.order import prepare_chain
+from src.chain.pool import pooled_qhats
 from src.chain.runner import SWEEP_TARGETS, ChainConfig, _save, _unit_scores, run_chain
 from src.chain.stages import TrainBudget
 from src.data.config import WINDOW_SIZE
+from src.models.config import MAIN_EARLY_STOP_MIN_DELTA
 from src.utils.splits import chronological_task_split
 
 N_CLASSES = 4
@@ -253,3 +256,75 @@ def test_chain_config_is_immutable():
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         CFG.seed = 1  # type: ignore[misc]
+
+
+def _recalibrate(row, rule, unit=False):
+    """Rebuild a method's test results from a row's stored scores alone (the offline path)."""
+    cal = sorted(row["calibration"], key=lambda c: c["offset"])
+
+    def block(c):
+        scores = c["scores"] * c["sigma"] if unit else c["scores"]
+        return {"labels": c["labels"], "scores": scores}
+
+    own, past = block(cal[0]), [block(c) for c in cal[1:]][::-1]  # past: oldest first
+    q, levels = pooled_qhats(rule, own, past, N_CLASSES, CFG.alpha)
+    sigma = np.ones_like(row["sigma"]) if unit else row["sigma"]
+    return evaluate_block(
+        {"probs": row["probs"], "sigma": sigma, "labels": row["labels"]},
+        q,
+        levels,
+        N_CLASSES,
+    )
+
+
+def test_stored_scores_reproduce_every_calibrated_method():
+    """Offline re-calibration from a row's probabilities, sigma and calibration scores gives
+    exactly the chain's own results, for the method and for the sigma = 1 ablation."""
+    for row in _uninterrupted():
+        assert [c["offset"] for c in row["calibration"]] == list(
+            range(len(row["calibration"]))
+        )
+        for rule, unit, method in (("B3", False, "chain_B3"), ("B1", False, "chain_B1"),
+                                   ("B3", True, "chain_sigma1")):  # fmt: skip
+            got = _recalibrate(row, rule, unit)
+            for k in ("covered", "size_over_k", "error", "level"):
+                np.testing.assert_array_equal(
+                    got[k], row["methods"][method][k], err_msg=method
+                )
+
+
+@cache
+def _logged():
+    """The reference run with its training log."""
+    log: list = []
+    rows = _run(5, training_log=log)
+    return rows, log
+
+
+def test_training_log_covers_every_session_with_consistent_curves():
+    """One entry per chain session, warm-up flagged; each stage's curve has one loss per
+    epoch, and no epoch after the restored one beat it by more than the stopping tolerance."""
+    rows, log = _logged()
+    assert [e["warmup"] for e in log] == [True, True, False, False, False]
+    assert [e["session"] for e in log][CFG.warmup :] == [r["session"] for r in rows]
+    for e in log:
+        for stage in ("step1", "step2", "sigma"):
+            c = e[stage]
+            assert len(c["train_loss"]) == len(c["val_loss"]) == c["epochs"] >= 1
+            assert c["best_epoch"] is None or 1 <= c["best_epoch"] <= c["epochs"]
+            if c["best_epoch"] is not None:
+                restored = c["val_loss"][c["best_epoch"] - 1]
+                assert min(c["val_loss"][c["best_epoch"] :], default=np.inf) >= (
+                    restored - MAIN_EARLY_STOP_MIN_DELTA
+                )
+
+
+def test_a_resumed_run_keeps_the_full_training_log(tmp_path):
+    """A chain stopped after 3 sessions and resumed ends with the uninterrupted run's log."""
+    ckpt = tmp_path / "chain.pt"
+    _run(5, checkpoint=ckpt, stop_after=3, training_log=[])
+    resumed: list = []
+    _run(5, checkpoint=ckpt, training_log=resumed)
+    assert [(e["session"], e["step1"]["train_loss"]) for e in resumed] == [
+        (e["session"], e["step1"]["train_loss"]) for e in _logged()[1]
+    ]
