@@ -161,6 +161,8 @@ def test_checkpoint_write_is_atomic(tmp_path):
     """The checkpoint lands under its final name (in a created directory) with no temp file."""
 
     class _Model:
+        """Stand-in for ChainModel: _save only reads its state()."""
+
         def state(self):
             """A stand-in model state."""
             return {"w": 1}
@@ -232,6 +234,8 @@ def test_a_new_checkpoint_replaces_the_old_one(tmp_path):
     """Saving again overwrites the previous checkpoint with the newer position."""
 
     class _Model:
+        """Stand-in for ChainModel: _save only reads its state()."""
+
         def state(self):
             """A stand-in model state."""
             return {}

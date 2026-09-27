@@ -32,7 +32,21 @@ SWEEP_TARGETS: tuple[float, ...] = tuple(
 
 @dataclass(frozen=True)
 class ChainConfig:
-    """Everything that parameterizes one chain run."""
+    """Everything that parameterizes one chain run.
+
+    Attributes:
+        seed:          seed for torch and numpy at the start of the run, and for every
+                       sigma fit.
+        device:        torch device string.
+        warmup:        leading sessions trained and calibrated but never tested.
+        alpha:         miscoverage level of the deployed method.
+        rule:          the deployed pool rule (``"A"`` or ``"B<M>"``).
+        sensitivity:   pool rules also evaluated, as a sensitivity analysis.
+        sweep_targets: coverage targets of the sweep; each non-deployed one retrains sigma.
+        baseline:      also train a fresh model per tested session with standard split
+                       conformal.
+        budget:        epoch caps and patience for the trained stages.
+    """
 
     seed: int = 42
     device: str = "cpu"
@@ -143,7 +157,31 @@ def _evaluate_session(
     first_of_mouse: bool,
     mouse_id: str,
 ) -> dict[str, Any]:
-    """Every result for one tested session, from the model right after its own fine-tune."""
+    """Every result for one tested session, from the model right after its own fine-tune.
+
+    Past sessions' calibration blocks are re-run through the current model, so borrowed
+    scores come from the same model as the session's own.
+
+    Args:
+        model:          the chain model right after fine-tuning on ``s``.
+        carried_sigma:  sigma as it was before this fine-tune, the start of the sweep's
+                        retrained branches.
+        inputs:         the signal inputs sigma was fit on (``ChainModel.fit``).
+        s:              the tested session.
+        past_sessions:  earlier sessions a pool rule may borrow from, oldest first.
+        session_data:   prepared sessions keyed by name.
+        configs:        per-session neuron configs.
+        n_classes:      number of regions.
+        cfg:            the run's configuration.
+        first_of_mouse: whether ``s`` is its mouse's first session in the chain.
+        mouse_id:       the session's mouse.
+
+    Returns:
+        The session's row: identity and sizes, the test labels, relative sigma and
+        signals, ``methods`` (``evaluate_block`` output per method: ``chain_<rule>`` for
+        every rule, ``chain_sigma1``, and ``fresh`` with the baseline), ``sweep`` (coverage
+        and size per target), and the deployed sigma's weights and signal stats.
+    """
     d = session_data[s]
     own_blk = model.block(s, d, d["val_idx"])
     test_blk = model.block(s, d, d["test_idx"])
@@ -153,6 +191,7 @@ def _evaluate_session(
     ]
 
     def calibrate(sigma: Any, rule: str, alpha: float, unit: bool = False) -> dict:
+        """Score every block with ``sigma`` (or sigma = 1), calibrate, evaluate the test."""
         score = (
             (lambda b: _unit_scores(b)) if unit else (lambda b: model.score(b, sigma))
         )
@@ -210,7 +249,14 @@ def _evaluate_session(
 
 
 def _unit_scores(blk: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-    """Scores with sigma = 1 (the ablation): ``1 - p_y``."""
+    """Scores with sigma = 1 (the ablation): ``1 - p_y``.
+
+    Args:
+        blk: a block with ``probs`` and ``labels``.
+
+    Returns:
+        The block scored like ``ChainModel.score``, with ``sigma`` all ones.
+    """
     p_true = blk["probs"][np.arange(len(blk["labels"])), blk["labels"]]
     return {
         "probs": blk["probs"],
@@ -221,7 +267,14 @@ def _unit_scores(blk: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
 
 
 def _save(path: Path, next_index: int, model: ChainModel, rows: list) -> None:
-    """Write the checkpoint atomically (a crash mid-write keeps the previous one)."""
+    """Write the checkpoint atomically (a crash mid-write keeps the previous one).
+
+    Args:
+        path:       checkpoint file.
+        next_index: chain position to resume from.
+        model:      the chain model.
+        rows:       rows of the sessions tested so far.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     torch.save(
