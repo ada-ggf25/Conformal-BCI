@@ -57,6 +57,8 @@ def sweep(tmp_path, monkeypatch):
 
 
 class TestBundleDir:
+    """Where a run's bundle goes: the cross-maze loader finds it only there."""
+
     def test_layout_is_paradigm_slug_then_seed(self, tmp_path):
         """A bundle lives at <root>/<paradigm slug>/ALL_MICE/seed_<k>, where the cross-maze
         loader looks for it."""
@@ -75,6 +77,8 @@ class TestBundleDir:
 
 
 class TestIsComplete:
+    """A bundle counts as done only once the notebook has written it in full."""
+
     def test_a_fully_written_bundle_is_complete(self, tmp_path):
         """metrics.json plus arrays.npz (written last by the notebook) marks it done."""
         _complete(tmp_path)
@@ -93,6 +97,8 @@ class TestIsComplete:
 
 
 class TestMain:
+    """The sweep's order, skipping, resuming, and failure handling."""
+
     def test_runs_go_seed_by_seed_through_every_maze(self, sweep):
         """Every maze runs for the first seed before the next seed starts, so a partial sweep
         already holds complete sets of mazes."""
