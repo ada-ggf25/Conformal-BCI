@@ -2,10 +2,10 @@
 
 Listed in ``SIGNALS`` column order, which is the order they are persisted in:
 
-    entropy         - a function of the softmax decoder predictions
-    variance        - the BC-VAE posterior variance, exp(logvar).mean
-    align_jacobian  - ||d z_aligned / d z||, the Step-2 alignment map's spectral norm
-    enc_jacobian    - ||d mu / d x||, the Step-1 encoder map's spectral norm
+- ``entropy``: the Shannon entropy of the decoder's softmax prediction.
+- ``variance``: the BC-VAE posterior variance, ``exp(logvar)`` averaged over latent dims.
+- ``align_jacobian``: ``||d z_aligned / d z||``, the Step-2 alignment map's spectral norm.
+- ``enc_jacobian``: ``||d mu / d x||``, the Step-1 encoder map's spectral norm.
 """
 
 from __future__ import annotations
