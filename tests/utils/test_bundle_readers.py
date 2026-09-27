@@ -143,6 +143,7 @@ def test_operating_curves_are_matched_by_target():
     """Each target's mean comes from the same target in every seed."""
 
     def _with_sweep(rows):
+        """A section bundle whose retrain sweep holds rows."""
         b = _section_bundle()
         b["conformal"]["retrain_sweep"] = {"learned": rows}
         return b
@@ -182,6 +183,7 @@ def test_loader_reads_seed_directories_and_ignores_a_pre_chain_bundle(tmp_path):
 
 
 def _ev(covered, size, error, level):
+    """One method's evaluate_block output for a session, from plain lists."""
     return {
         "covered": np.array(covered, float),
         "size_over_k": np.array(size, float),
