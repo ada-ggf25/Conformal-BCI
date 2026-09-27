@@ -167,6 +167,8 @@ def test_rare_class_gets_proportionally_more_weight():
 
 
 class TestInverseFrequencyWeights:
+    """Class weights worked by hand from the inverse-frequency formula."""
+
     def test_no_counts_means_uniform_weights(self):
         """Without class counts every class weighs 1."""
         w = _inverse_frequency_weights(None, 3, power=1.0, device=_DEVICE)
