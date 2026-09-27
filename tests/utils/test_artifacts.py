@@ -226,6 +226,49 @@ class TestBuildChainBundle:
             )
 
 
+def test_meeting_the_target_is_inclusive():
+    """Coverage exactly at 1 - alpha meets the target: 9 of 10 windows at alpha 0.1."""
+    row = _row(
+        "A_2", True, [0] * 10, [1] * 9 + [0], [1 / 3] * 10, [0] * 10, ["own"] * 10
+    )
+    m, _ = _bundle([row], chain=("W_1", "A_2"))
+    tc = m["conformal"]["test_coverage"]
+    assert tc["whole_test"]["meets_target"] is True
+    assert (
+        tc["per_session"][0]["meets_target"] is True
+        and tc["n_sessions_below_target"] == 0
+    )
+
+
+def test_method_summary_of_one_session_has_its_gap_to_target():
+    """With one session the mean gap is that session's distance to the target."""
+    rows = [{"methods": {"m": _ev([1, 1, 0, 1], [0.5] * 4, [0, 0, 0, 0], ["own"] * 4)}}]
+    s = method_summary(rows, "m", 0.9)
+    assert s["coverage"] == pytest.approx(0.75)
+    assert s["mean_abs_gap"] == pytest.approx(0.15) and s["sessions_below"] == 1
+    assert s["accuracy"] == 1.0 and s["share_own"] == 1.0
+
+
+def test_sigma_nets_payload_rebuilds_each_sessions_scale(tmp_path):
+    """A saved payload loads back into a ScaleNet that gives the same sigma as the original."""
+    import torch
+
+    from src.conformal.learned import ScaleNet, scale_of
+
+    torch.manual_seed(0)
+    net = ScaleNet(len(SIGNALS), hidden=8, depth=1)
+    with torch.no_grad():
+        net.net[-1].weight.normal_()
+    rows = [{"session": "A", "sigma_state": net.state_dict(),
+             "signal_stats": (np.zeros(len(SIGNALS)), np.ones(len(SIGNALS)))}]  # fmt: skip
+    torch.save(sigma_nets_payload(rows, hidden=8, depth=1), tmp_path / "s.pt")
+    p = torch.load(tmp_path / "s.pt", weights_only=False)
+    back = ScaleNet(len(p["signals"]), hidden=p["hidden"], depth=p["depth"])
+    back.load_state_dict(p["sessions"][0]["state_dict"])
+    z = np.random.default_rng(0).standard_normal((5, len(SIGNALS)))
+    np.testing.assert_array_equal(scale_of(back, z), scale_of(net, z))
+
+
 def test_sigma_nets_payload_lists_each_sessions_net_and_standardization():
     """Session i of the payload is row i, with its own weights and signal mean/std."""
     rows = [

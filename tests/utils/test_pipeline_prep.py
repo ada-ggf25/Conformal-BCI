@@ -85,6 +85,26 @@ class TestForceSessionSpecific:
         assert c["specific_ids"] == [11, 22, 33]
 
 
+def test_force_session_specific_is_idempotent_across_sessions():
+    """Every session becomes all-specific, and a second pass changes nothing."""
+    configs = {
+        "a": {
+            "n_total": 2,
+            "all_ids": ["x", "y"],
+            "shared_indices": [0, 1],
+            "n_shared": 2,
+        },
+        "b": {"n_total": 1, "all_ids": ["z"], "shared_indices": [], "n_shared": 0},
+    }
+    force_session_specific(configs)
+    once = {k: dict(v) for k, v in configs.items()}
+    force_session_specific(configs)
+    assert configs == once
+    assert (
+        configs["a"]["specific_indices"] == [0, 1] and configs["b"]["n_specific"] == 1
+    )
+
+
 class TestAssembleSessionData:
     """Windows whose Linear trial has no water position have no region, so they must never
     reach the train, calibration or test blocks."""
@@ -224,6 +244,12 @@ def test_every_session_gate():
     assert shared == ["u1", "u2"] and n_shared == 2
 
 
+def test_a_session_with_exactly_the_minimum_task_windows_is_kept():
+    """The floor is inclusive: min_windows task windows are enough."""
+    _, valid, *_ = _assemble({"s": (9, 30, [0, 1] * 15, 30, 20)}, min_windows=20)
+    assert valid == ["s"]
+
+
 def test_region_gate_counts_task_windows_only():
     """A second region seen only outside the task windows does not rescue a session."""
     labels = [1] * 25 + [4] * 5
@@ -314,6 +340,14 @@ def test_gate_drops_sessions_with_small_val_or_test_blocks():
     assert valid == ["ok"] and list(data) == ["ok"]
 
 
+def test_gate_keeps_sessions_exactly_at_the_floors():
+    """The floors are inclusive: a session with exactly min_val and min_test windows stays."""
+    data = {"s": {"val_idx": np.arange(10), "test_idx": np.arange(5)}}
+    valid = ["s"]
+    assert gate_sessions_conformal(data, valid, min_val=10, min_test=5) == []
+    assert valid == ["s"]
+
+
 class TestAssertChronologicalDisjoint:
     def test_ordered_blocks_pass(self):
         """Train before val before test passes, regardless of the index order stored."""
@@ -323,7 +357,12 @@ class TestAssertChronologicalDisjoint:
 
     @pytest.mark.parametrize(
         ("tr", "va", "te"),
-        [([0, 1, 5], [3, 4], [6]), ([0, 1], [2, 4], [4, 5]), ([0, 3], [2], [5])],
+        [
+            ([0, 1, 5], [3, 4], [6]),
+            ([0, 1], [2, 4], [4, 5]),
+            ([0, 3], [2], [5]),
+            ([0, 2], [2, 3], [4]),
+        ],
     )
     def test_interleaved_or_overlapping_blocks_fail(self, tr, va, te):
         """Any train window after a val window, or shared windows, breaks the split."""
@@ -351,3 +390,9 @@ def test_class_counts_pool_train_rows_of_the_listed_sessions():
         5: 1,
     }
     assert compute_class_counts(data, ["c"]) == {}
+
+
+def test_class_counts_of_one_session():
+    """A single session's counts are its own train-row histogram."""
+    data = {"a": {"regions": np.array([3, 3, 0, 3]), "train_idx": np.array([0, 1, 2])}}
+    assert compute_class_counts(data, ["a"]) == {0: 1, 3: 2}

@@ -501,3 +501,34 @@ def test_paradigm_falls_back_to_the_directory_name(tmp_path):
     del b["paradigm"]
     _write(tmp_path / "Y_Maze" / "ALL_MICE" / "seed_3", b)
     assert list(load_maze_bundles(tmp_path)[0]) == ["Y_Maze"]
+
+
+def test_seed_values_of_no_runs_is_empty():
+    """No seeds, no values."""
+    assert seed_values({}, lambda b: 1) == []
+
+
+def test_session_meets_target_is_inclusive():
+    """A seed-mean coverage exactly at the target counts as meeting it."""
+    b = _section_bundle()
+    b["conformal"]["test_coverage"]["per_session"] = [{"session": "S", "coverage": 0.9}]
+    assert seed_session_coverage({1: b})["meets"] == [True]
+
+
+def test_per_session_table_keeps_chain_order():
+    """The deployed method's rows come back as stored, in chain order."""
+    b = _seed_bundle(0.8, [("B_2", 0.7, 0.1, False), ("A_1", 0.9, 0.2, True)])
+    assert [r["session"] for r in per_session_table(b)] == ["B_2", "A_1"]
+
+
+def test_load_bundle_attaches_both_sidecars(tmp_path):
+    """A bundle directory with arrays and sigma nets gets both paths; the metrics are read."""
+    from src.utils.bundle_readers import _load_bundle
+
+    (tmp_path / "metrics.json").write_text(json.dumps({"seed": 5}))
+    (tmp_path / "arrays.npz").write_bytes(b"")
+    (tmp_path / "sigma_nets.pt").write_bytes(b"")
+    b = _load_bundle(tmp_path / "metrics.json")
+    assert b["seed"] == 5
+    assert b["_arrays_path"] == tmp_path / "arrays.npz"
+    assert b["_sigma_nets_path"] == tmp_path / "sigma_nets.pt"

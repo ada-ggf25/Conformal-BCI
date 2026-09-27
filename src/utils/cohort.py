@@ -34,8 +34,8 @@ def maze_family(paradigm: str) -> str:
 def assert_single_family(paradigms: list[str], label: str) -> None:
     """Raise unless every pooled paradigm and the display label share one family.
 
-    The label is checked too, not just the members: ``PARADIGM_LABEL`` is free
-    text injected by ``run_mazes.py`` and a mislabeled merge would route the
+    The label is checked too, not just the members: a caller-supplied
+    ``paradigm_label`` is free text, and a mislabeled merge would route the
     region labeler to the wrong geometry.
     """
     families = {maze_family(p) for p in [*paradigms, label]}
@@ -74,8 +74,9 @@ def discover_cohort(
         target_mice:    restrict the pool to these mouse ids. ``None`` = every
                         mouse from ``get_all_mice``.
         exclude_mice:   mouse ids to hold out of the pool.
-        paradigm_label: display / artifact label when pooling a list. Ignored for
-                        a single paradigm.
+        paradigm_label: display / artifact label, replacing the default (the paradigm
+                        itself, the preset name, or a list joined with "+"). It must
+                        name the same maze family as the pooled paradigms.
 
     Returns:
         A ``CohortResult``. Raises ``RuntimeError`` if no mouse has >= 2

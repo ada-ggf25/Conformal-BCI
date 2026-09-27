@@ -4,8 +4,7 @@
 for being skipped) are chosen by hand and the pooled cohort is checked against them.
 
 Accepted gaps: ``MERGED`` itself (a literal preset table) is only exercised through the
-``Nested_All`` expansion; and whether ``paradigm_label`` applies to a single paradigm (the
-docstring says it is ignored, the code applies it) is left unpinned until that is settled.
+``Nested_All`` expansion.
 """
 
 from __future__ import annotations
@@ -16,10 +15,28 @@ import pytest
 
 from src.data.regions import get_num_classes
 from src.utils.cohort import (
+    MERGED,
     apply_session_exclusions,
     assert_single_family,
     discover_cohort,
+    maze_family,
 )
+
+
+@pytest.mark.parametrize(
+    ("paradigm", "family"),
+    [
+        ("Y_Maze", "Y_Maze"),
+        ("Nested_Maze", "Nested"),
+        ("Nested_Maze+2", "Nested"),
+        ("Nested_All", "Nested"),
+        ("More_Water", "More_Water"),
+        ("Linear_Track", "More_Water"),  # anything else is the Linear family
+    ],
+)
+def test_maze_family(paradigm, family):
+    """Each paradigm string belongs to the family whose geometry labels its regions."""
+    assert maze_family(paradigm) == family
 
 
 class TestAssertSingleFamily:
@@ -112,14 +129,17 @@ class TestDiscoverCohort:
         ("target", "label_arg", "label"),
         [
             ("Y_Maze", "", "Y_Maze"),
+            ("Y_Maze", "Y_Maze_pilot", "Y_Maze_pilot"),
+            ("Nested_All", "Nested_Pool", "Nested_Pool"),
             (["Nested_Maze"], "", "Nested_Maze"),
             (["Nested_Maze", "Nested_Maze+2"], "", "Nested_Maze+Nested_Maze+2"),
             (["Nested_Maze", "Nested_Maze+2"], "Nested_Pool", "Nested_Pool"),
         ],
     )
     def test_label(self, target, label_arg, label):
-        """A single paradigm labels itself, a list joins with "+", an explicit label wins."""
-        paradigms = [target] if isinstance(target, str) else target
+        """A paradigm or preset labels itself, a list joins with "+", and an explicit label
+        wins in every case, a single paradigm included."""
+        paradigms = MERGED.get(target, [target]) if isinstance(target, str) else target
         table = {(1, p): [f"M1_{i}{p}" for i in range(2)] for p in paradigms}
         with _mice([1]), _resolver(table):
             assert (
