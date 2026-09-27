@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from ..conformal.learned import ScaleNet, scale_of, train_scale
+from ..conformal.learned import ScaleNet, TrainReport, scale_of, train_scale
 from ..conformal.signals import (
     SIGNALS,
     SignalStats,
@@ -68,12 +68,14 @@ class TrainBudget:
         patience:     early-stopping patience for Step 1 and for Step 2.
         mlp_epochs:   epoch cap for the conformal scale sigma.
         mlp_patience: early-stopping patience for sigma.
+        kl_warmup_epochs: length of Step 1's KL warm-up, run only when training from scratch.
     """
 
     epochs: int = 200
     patience: int = 20
     mlp_epochs: int = 300
     mlp_patience: int = 30
+    kl_warmup_epochs: int = KL_WARMUP_EPOCHS
 
 
 class ChainModel:
@@ -96,6 +98,11 @@ class ChainModel:
         sigma:    the deployed conformal scale, or None before the first ``fit`` (and in a
                   baseline model, which never trains one).
         stats:    the signal standardization sigma was trained with.
+        history:  the last ``fit``'s training curves, ``{"step1", "step2", "sigma"}``, each
+                  ``{"epochs", "best_epoch", "train_loss", "val_loss"}``: ``val_loss`` is the
+                  held-out loss early stopping watched (Step 2: its region loss),
+                  ``best_epoch`` the 1-based epoch restored (None when none was); ``sigma`` is
+                  None when sigma was not trained.
     """
 
     def __init__(
@@ -117,6 +124,7 @@ class ChainModel:
         self.sessions = [first_session]
         self.sigma: ScaleNet | None = None
         self.stats: SignalStats | None = None
+        self.history: dict[str, dict[str, Any] | None] = {}
         self.n_classes, self.device = n_classes, device
 
     def add_session(self, session: str, config: dict) -> None:
@@ -142,7 +150,8 @@ class ChainModel:
 
         Early stopping uses the session's calibration block (``val_idx``). The KL warm-up runs
         only when training from scratch. Sigma is fine-tuned from the previous session's sigma.
-        The session's Step 1 latents are stored in ``d["step1_all_latents"]``.
+        The session's Step 1 latents are stored in ``d["step1_all_latents"]`` and the three
+        stages' training curves in ``history``.
 
         Args:
             s:            the session's name.
@@ -165,7 +174,7 @@ class ChainModel:
         silent: Callable[[str], None] = lambda _m: None  # noqa: E731
         # A log interval longer than the run: no progress lines.
         quiet = budget.epochs + 1
-        self.step1, _ = train_step1(
+        self.step1, hist1 = train_step1(
             model=self.step1,
             loader=DataLoader(
                 HybridClassificationDataset(one, index_key="train_idx"),
@@ -190,14 +199,14 @@ class ChainModel:
             class_counts=counts,
             kl_weight=STEP1_KL_WEIGHT,
             kl_free_bits=STEP1_KL_FREE_BITS,
-            kl_warmup_epochs=KL_WARMUP_EPOCHS if from_scratch else 0,
+            kl_warmup_epochs=budget.kl_warmup_epochs if from_scratch else 0,
             early_stop_patience=budget.patience,
             log_every=quiet,
         )
         d["step1_all_latents"] = extract_latents_hybrid(
             self.step1, d["windows"], s, self.device
         )
-        self.dec, _ = train_step2(
+        self.dec, hist2 = train_step2(
             alignment_decoder=self.dec,
             loader=DataLoader(
                 LatentSequenceDataset(one, [s], STEP2_SEQ_LEN, "train_idx"),
@@ -230,10 +239,23 @@ class ChainModel:
             for k, idx in (("tr", "train_idx"), ("va", "val_idx"))
         }
         self.stats = SignalStats.fit(inputs["tr"]["u"])
+        self.history = {
+            "step1": _curve(hist1, "val_loss"),
+            "step2": _curve(hist2, "val_region"),
+            "sigma": None,
+        }
         if train_sigma:
-            self.sigma = self.train_sigma(
+            self.sigma, report = self._fit_sigma(
                 inputs, alpha, None if from_scratch else self.sigma, budget, seed
             )
+            self.history["sigma"] = {
+                "epochs": report.epochs,
+                "best_epoch": None
+                if report.best_epoch is None
+                else report.best_epoch + 1,
+                "train_loss": [float(v) for v in report.loss],
+                "val_loss": [float(v) for v in report.earlystop_loss or []],
+            }
         return inputs
 
     def train_sigma(
@@ -256,9 +278,20 @@ class ChainModel:
         Returns:
             The trained scale network.
         """
+        return self._fit_sigma(inputs, alpha, init, budget, seed)[0]
+
+    def _fit_sigma(
+        self,
+        inputs: dict[str, dict[str, np.ndarray]],
+        alpha: float,
+        init: ScaleNet | None,
+        budget: TrainBudget,
+        seed: int,
+    ) -> tuple[ScaleNet, TrainReport]:
+        """``train_sigma`` plus the training report (loss curves, restored epoch)."""
         assert self.stats is not None
         tr, va = inputs["tr"], inputs["va"]
-        net, _ = train_scale(
+        net, report = train_scale(
             standardize_signals(tr["u"], self.stats),
             tr["probs"],
             tr["labels"],
@@ -282,7 +315,7 @@ class ChainModel:
             seed=seed,
             device=str(self.device),
         )
-        return net
+        return net, report
 
     # ------------------------------------------------------------------ inference
 
@@ -422,3 +455,16 @@ class ChainModel:
             self.stats = SignalStats(
                 np.asarray(state["stats"][0]), np.asarray(state["stats"][1])
             )
+
+
+def _curve(hist: dict, val_key: str) -> dict[str, Any]:
+    """A training history (``train_step1`` / ``train_step2``) as a compact curve record.
+
+    ``val_key`` names the held-out loss that early stopping watched, stored as ``val_loss``.
+    """
+    return {
+        "epochs": len(hist.get("loss", [])),
+        "best_epoch": hist.get("best_epoch"),
+        "train_loss": [float(v) for v in hist.get("loss", [])],
+        "val_loss": [None if v is None else float(v) for v in hist.get(val_key, [])],
+    }
