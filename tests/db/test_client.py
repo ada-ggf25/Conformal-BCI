@@ -46,6 +46,8 @@ def mongo(monkeypatch):
 
 
 class TestGetClient:
+    """The shared client: one per process, pointed through the tunnel."""
+
     def test_missing_uri_is_an_error(self, mongo):
         """Without MONGODB_URI there is nothing to connect to, so it raises rather than guess."""
         with pytest.raises(ValueError, match="MONGODB_URI"):
@@ -97,6 +99,8 @@ class TestGetClient:
 
 
 class TestGetDatabase:
+    """Which database opens, and refusing to guess one."""
+
     def test_explicit_name_wins_over_the_environment(self, mongo, monkeypatch):
         """Passing a name opens that database even when MONGODB_DATABASE names another."""
         monkeypatch.setenv("MONGODB_URI", "mongodb://h")
@@ -158,6 +162,8 @@ def test_reset_without_a_tunnel_only_drops_the_client(monkeypatch):
 
 
 class TestRelay:
+    """The relay copies bytes both ways and ends when either side does."""
+
     def test_bytes_flow_both_ways_and_both_ends_close(self):
         """The relay copies each side to the other and closes both once one side hangs up."""
         local, local_peer = socket.socketpair()
@@ -218,6 +224,8 @@ def _tunnel(monkeypatch, transport):
 
 
 class TestSSHTunnel:
+    """The tunnel forwards local connections, over real local sockets."""
+
     def test_local_connection_is_forwarded_to_the_remote_port(self, monkeypatch):
         """Bytes written to the local listener arrive on a direct-tcpip channel to MongoDB."""
         transport = _FakeTransport()
