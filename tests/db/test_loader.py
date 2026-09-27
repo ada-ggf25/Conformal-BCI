@@ -13,6 +13,8 @@ from src.db.loader import _read_gridfs, get_behavior, get_neural
 
 
 class _FakeCursor:
+    """The one pymongo cursor method the loader uses: sort."""
+
     def __init__(self, docs: list[dict]):
         """Store the documents this cursor will sort."""
         self._docs = docs
