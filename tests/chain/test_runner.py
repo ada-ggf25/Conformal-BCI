@@ -3,8 +3,7 @@
 Training budgets are cut to a single epoch, so the numbers mean nothing; the tests check
 properties of the protocol that must hold whatever the model learns.
 
-Accepted gaps: the quality of what is learned (real-data validation covers it), and
-``src/chain/stages.py`` on its own (its checkpoint round trip is exercised by the resume test).
+Accepted gaps: the quality of what is learned (real-data validation covers it).
 """
 
 from __future__ import annotations
@@ -12,9 +11,11 @@ from __future__ import annotations
 from functools import cache
 
 import numpy as np
+import pytest
+import torch
 
 from src.chain.order import prepare_chain
-from src.chain.runner import ChainConfig, run_chain
+from src.chain.runner import SWEEP_TARGETS, ChainConfig, _save, _unit_scores, run_chain
 from src.chain.stages import TrainBudget
 from src.data.config import WINDOW_SIZE
 from src.utils.splits import chronological_task_split
@@ -60,13 +61,12 @@ def _sessions(n):
     return data, names, configs
 
 
-def _run(n, **kwargs):
+def _run(n, cfg=CFG, log=lambda _m: None, **kwargs):
+    """Prepare n synthetic sessions and run the chain over them."""
     data, names, configs = _sessions(n)
-    chain = prepare_chain(data, names, CFG.warmup)
+    chain = prepare_chain(data, names, cfg.warmup)
     mouse = {s: s.split("_")[0] for s in chain}
-    return run_chain(
-        data, chain, configs, N_CLASSES, mouse, CFG, log=lambda _m: None, **kwargs
-    )
+    return run_chain(data, chain, configs, N_CLASSES, mouse, cfg, log=log, **kwargs)
 
 
 @cache
@@ -107,3 +107,70 @@ def test_resuming_from_a_checkpoint_reproduces_the_uninterrupted_run(tmp_path):
     ckpt = tmp_path / "chain.pt"
     _run(5, checkpoint=ckpt, stop_after=3)
     _same(_run(5, checkpoint=ckpt), _uninterrupted())
+
+
+def test_rows_record_the_tested_sessions_test_block():
+    """Each row's labels are its test windows' regions, and sigma_rel is relative to that
+    session's median (so its median is exactly 1)."""
+    data, _, _ = _sessions(5)
+    rows = _uninterrupted()
+    for r in rows:
+        d = data[r["session"]]
+        assert r["labels"].tolist() == d["regions"][d["test_idx"]].tolist()
+        assert r["n_test"] == len(d["test_idx"]) and r["n_cal"] == len(d["val_idx"])
+        assert np.median(r["sigma_rel"]) == pytest.approx(1.0)
+        assert r["mouse"] == r["session"].split("_")[0]
+    assert [r["first_of_mouse"] for r in rows] == [False, False, False]
+
+
+def test_methods_sweep_and_baseline_switch():
+    """The deployed rule, its sensitivity rules and the sigma = 1 ablation are always run;
+    the fresh baseline only when asked. The sweep has one entry per configured target."""
+    logs: list[str] = []
+    cfg = ChainConfig(
+        seed=0, warmup=1, sensitivity=("A",), sweep_targets=(0.9,), baseline=False,
+        budget=CFG.budget,
+    )  # fmt: skip
+    rows = _run(2, cfg=cfg, log=logs.append)
+    assert set(rows[0]["methods"]) == {"chain_B3", "chain_A", "chain_sigma1"}
+    assert set(_uninterrupted()[0]["methods"]) == {
+        "chain_B3", "chain_B1", "chain_sigma1", "fresh",
+    }  # fmt: skip
+    assert list(rows[0]["sweep"]) == [0.9]
+    assert len(logs) == 2 and "warm-up" in logs[0] and "(new mouse)" in logs[1]
+
+
+def test_unit_scores_are_one_minus_the_true_probability():
+    """The sigma = 1 ablation scores 1 - p_y with a unit scale."""
+    blk = {"probs": np.array([[0.1, 0.9], [0.6, 0.4]]), "labels": np.array([1, 1])}
+    out = _unit_scores(blk)
+    np.testing.assert_allclose(out["scores"], [0.1, 0.6])
+    assert out["sigma"].tolist() == [1.0, 1.0]
+
+
+def test_sweep_grid_includes_the_deployed_target():
+    """The sweep runs 5% to 95% in 5% steps, so the deployed 90% is one of its points."""
+    assert len(SWEEP_TARGETS) == 19
+    assert SWEEP_TARGETS[0] == pytest.approx(0.05) and SWEEP_TARGETS[
+        -1
+    ] == pytest.approx(0.95)
+    assert any(np.isclose(t, 0.9) for t in SWEEP_TARGETS)
+
+
+def test_checkpoint_write_is_atomic(tmp_path):
+    """The checkpoint lands under its final name (in a created directory) with no temp file."""
+
+    class _Model:
+        def state(self):
+            """A stand-in model state."""
+            return {"w": 1}
+
+    path = tmp_path / "sub" / "chain.pt"
+    _save(path, 3, _Model(), [{"session": "S"}])
+    assert path.exists() and not path.with_suffix(".tmp").exists()
+    state = torch.load(path, weights_only=False)
+    assert (
+        state["next"] == 3
+        and state["model"] == {"w": 1}
+        and state["rows"][0]["session"] == "S"
+    )
