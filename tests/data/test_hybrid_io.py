@@ -13,6 +13,7 @@ import pytest
 from bson import ObjectId
 
 from src.data.hybrid_io import (
+    _classify_bin,
     _trial_bin_count,
     _xy_columns,
     build_example_raster,
@@ -320,6 +321,30 @@ def test_trial_bin_count(doc, expected):
     assert got == expected
 
 
+def test_xy_columns_with_the_plain_channel_names():
+    """The unprefixed X_Position / Y_Position channels are found too."""
+    assert _xy_columns({"Y_Position": [], "X_Position": []}) == (
+        "X_Position",
+        "Y_Position",
+    )
+
+
+@pytest.mark.parametrize(
+    ("x", "y", "paradigm", "water", "expected"),
+    [
+        (1.0, 9000.0, "Y_Maze", np.nan, 7),
+        (1.0, 9000.0, "Nested_Maze", np.nan, 7),
+        (3000.0, 9000.0, "Nested_Maze+2", np.nan, 8),
+        (1.0, 1300.0, "More_Water", 2600.0, 4),
+        (1.0, 1300.0, "More_Water", np.nan, -1),
+        (1.0, 1300.0, "Y_Maze", 2600.0, 1),  # the Y maze ignores the water
+    ],
+)
+def test_classify_bin_dispatches_on_the_paradigm(x, y, paradigm, water, expected):
+    """Each paradigm string routes the sample to its own maze geometry."""
+    assert _classify_bin(x, y, paradigm, water) == expected
+
+
 def test_xy_columns_are_found_by_substring():
     """Prefixed channel names are recognized; a document without them yields None."""
     assert _xy_columns(
@@ -547,6 +572,15 @@ class TestBuildExampleRaster:
 
 
 class TestWindowing:
+    def test_label_reads_x_from_the_last_bin_too(self):
+        """At y = 7000 the Y maze splits on the sign of x: only the last bin is on the right,
+        so the window is R7, not R6."""
+        x = np.r_[np.full(9, -5.0), 5.0]
+        _, r = create_windows_with_regions(
+            np.zeros((10, 1), np.float32), x, np.full(10, 7000.0), 10, "Y_Maze"
+        )
+        assert r.tolist() == [7]
+
     def test_trailing_partial_window_is_dropped(self):
         """25 bins at 10 per window is 2 windows; the last 5 bins belong to none."""
         w, r = create_windows_with_regions(

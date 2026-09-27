@@ -118,6 +118,17 @@ class TestGetDatabase:
             client.get_database()
 
 
+def test_starting_a_tunnel_schedules_its_shutdown(monkeypatch):
+    """A tunnel opened by get_client is stopped when the interpreter exits."""
+    tunnel = MagicMock()
+    monkeypatch.setattr(client, "_SSHTunnel", MagicMock(return_value=tunnel))
+    registered = []
+    monkeypatch.setattr(client.atexit, "register", registered.append)
+    monkeypatch.setenv("SSH_HOST", "gateway.example")
+    client._start_tunnel()
+    assert client._tunnel is tunnel and registered == [tunnel.stop]
+
+
 def test_reset_client_stops_the_tunnel_and_drops_the_cache(monkeypatch):
     """After a reset the next get_client opens a new connection."""
     tunnel = MagicMock()
