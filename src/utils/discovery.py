@@ -26,10 +26,11 @@ def get_all_mice(db) -> list[int]:
 def get_contexts_for_mouse(db, mouse_id: int) -> dict[str, list[str]]:
     """Return {paradigm: [session_names]} for all sessions belonging to mouse_id.
 
-    A session is included only if:
-      - the dates document has a matching pos_path (M<id>_<YYMMDD> format)
-      - at least one trial exists for that date
-      - at least one neural data file exists for that trial
+    A session is included only if all of these hold:
+
+    - the dates document has a matching ``pos_path`` (``M<id>_<YYMMDD>`` format);
+    - at least one trial exists for that date;
+    - at least one neural data file exists for that trial.
 
     Args:
         db (Database): pymongo Database.

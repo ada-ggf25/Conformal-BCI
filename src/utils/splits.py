@@ -14,11 +14,11 @@ def chronological_task_split(
     """Chronological within-session split over task windows only.
 
     Non-task windows are left out entirely. The task windows are then partitioned into three
-    contiguous, time-ordered blocks (defaults 80/10/10):
+    contiguous, time-ordered blocks (defaults 80/10/10; the session chain uses 60/30/10):
 
-        train - Step 1 and Step 2 model training, plus fitting the learned scale sigma
-        val   - early stopping / epoch selection and the conformal quantile q_hat
-        test  - coverage evaluation
+    - train: Step 1 and Step 2 model training, plus fitting the learned scale sigma.
+    - val: early stopping / epoch selection and the conformal quantile q_hat.
+    - test: coverage evaluation.
 
     Args:
         task_mask:  (n_windows,) boolean. True where the window is a task (W) window,
