@@ -79,6 +79,8 @@ def _signals(n=6, idx=(1, 3, 4)):
 
 
 class TestWindowSignals:
+    """Each signal column is its own quantity, computed on the selected windows."""
+
     def test_entropy_column_matches_manual(self):
         """Signal column 0 is the Shannon entropy of each selected window's posterior."""
         u, a, idx = _signals()
@@ -113,6 +115,8 @@ class TestWindowSignals:
 
 
 class TestSignalStats:
+    """Standardization is fitted once and frozen, so scoring never leaks."""
+
     def test_frozen_stats_applied_to_new_data(self):
         """Standardization must reuse the fitted statistics, never recompute on the
         block being scored. Recomputing would leak test-block information."""

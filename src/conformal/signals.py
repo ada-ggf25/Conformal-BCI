@@ -46,10 +46,23 @@ def window_signals(
     ``windows``, ``latents``, ``logvar`` and ``probs`` are the session's full per-window arrays:
     the alignment Jacobian reads each window's preceding latents as context.
 
+    Args:
+        step1_model:       the trained BC-VAE, for the encoder Jacobian.
+        alignment_decoder: the trained alignment decoder, for the alignment Jacobian.
+        session:           the session's name, for the encoder's per-session layers.
+        windows:           (n_windows, T, n_neurons) normalized windows of the session.
+        latents:           (n_windows, latent_dim) Step 1 posterior means.
+        logvar:            (n_windows, latent_dim) Step 1 posterior log-variances.
+        probs:             (n_windows, n_classes) decoder softmax probabilities.
+        idx:               indices of the windows to compute the signals for.
+        seq_len:           the alignment decoder's sequence length.
+        device:            device for the Jacobian passes.
+
     Returns:
         (len(idx), 4) float64 array.
     """
     p = probs[idx].astype(np.float64)
+    # Shannon entropy in nats; the clip keeps log(0) out while 0 * log(0) stays 0.
     ent = -(p * np.log(np.clip(p, 1e-10, 1.0))).sum(axis=1)
     var = np.exp(logvar[idx].astype(np.float64)).mean(axis=1)
     seqs = build_latent_sequences(latents, seq_len)[idx]
@@ -60,7 +73,12 @@ def window_signals(
 
 @dataclass(frozen=True)
 class SignalStats:
-    """Per-signal centering/scaling, fitted once on a reference block and then frozen."""
+    """Per-signal centering/scaling, fitted once on a reference block and then frozen.
+
+    Attributes:
+        mean: (n_signals,) per-signal mean.
+        std:  (n_signals,) per-signal standard deviation, plus a small epsilon.
+    """
 
     mean: np.ndarray
     std: np.ndarray
@@ -76,6 +94,9 @@ class SignalStats:
         Args:
             signals: (n, n_signals) raw signal matrix in ``SIGNALS`` column order.
 
+        Returns:
+            The frozen statistics.
+
         Raises:
             ValueError: if ``signals`` is not 2-D.
         """
@@ -86,7 +107,18 @@ class SignalStats:
 
 
 def standardize_signals(signals: np.ndarray, stats: SignalStats) -> np.ndarray:
-    """Apply a frozen SignalStats map to a signal matrix -> (n, n_signals) float64."""
+    """Apply a frozen SignalStats map to a signal matrix.
+
+    Args:
+        signals: (n, n_signals) raw signals in ``SIGNALS`` column order.
+        stats:   statistics fitted by ``SignalStats.fit``.
+
+    Returns:
+        (n, n_signals) float64 standardized signals.
+
+    Raises:
+        ValueError: if ``signals`` is not 2-D or its signal count differs from ``stats``.
+    """
     s = np.asarray(signals, dtype=np.float64)
     if s.ndim != 2 or s.shape[1] != stats.mean.shape[0]:
         raise ValueError(
