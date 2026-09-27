@@ -1,4 +1,10 @@
-"""Session data assembly and class-count utilities."""
+"""Session data assembly and class-count utilities.
+
+``assemble_session_data`` builds the per-session data dicts every later stage reads and
+modifies in place: ``windows`` and ``regions``, the ``train_idx`` / ``val_idx`` /
+``test_idx`` split, and the per-bin positions. The other helpers transform or check those
+dicts.
+"""
 
 from __future__ import annotations
 
@@ -35,6 +41,10 @@ def assemble_session_data(
 ) -> tuple[dict, list[str], dict, list[str], int]:
     """Extract, window, label, and split neural data for each session.
 
+    A session is dropped when it has fewer than ``MIN_NEURONS_PER_SESSION`` neurons, no
+    usable trial, a task mask that does not line up with its windows, fewer than
+    ``min_windows`` task windows, or fewer than ``min_classes`` regions among them.
+
     Args:
         db:           pymongo Database
         sessions:     ordered list of session names to process
@@ -48,11 +58,13 @@ def assemble_session_data(
         min_classes:  sessions with fewer unique region classes are dropped (default 2)
 
     Returns:
-        session_data:       dict[session_name → data dict]
-        valid_sessions:     list of sessions that passed filtering
-        session_configs:    per-session neuron config (from build_hybrid_neuron_mapping)
-        shared_neuron_ids:  sorted list of neuron IDs present in all sessions
-        n_shared:           len(shared_neuron_ids)
+        ``(session_data, valid_sessions, session_configs, shared_neuron_ids, n_shared)``.
+        ``session_data`` maps each kept session to a dict with ``windows``, ``regions``,
+        ``train_idx``, ``val_idx``, ``test_idx``, ``x_positions``, ``y_positions`` and
+        ``water_positions``. ``valid_sessions`` lists the kept sessions in input order.
+        ``session_configs`` has the neuron config of every input session (from
+        ``build_hybrid_neuron_mapping``). ``shared_neuron_ids`` is the sorted list of
+        neuron IDs present in all sessions, and ``n_shared`` its length.
     """
     shared_neuron_ids, session_configs = build_hybrid_neuron_mapping(db, sessions)
     n_shared = len(shared_neuron_ids)
@@ -83,6 +95,7 @@ def assemble_session_data(
             continue
         if uses_water(paradigm):
             n = len(windows) * WINDOW_SIZE
+            # Linear maze: a window without a water position in every bin has no region.
             has_water = np.isfinite(water[:n]).reshape(len(windows), WINDOW_SIZE)
             task_mask = task_mask & has_water.all(axis=1)
         task_idx = np.flatnonzero(task_mask)
@@ -119,11 +132,13 @@ def normalize_session_windows(
     """Normalize windows per-unit using train-split statistics.
 
     Computes mean and std from training windows only, then z-scores all
-    windows with those statistics, so no test-block statistic never
-    reach the encoder.
+    windows with those statistics, so no validation or test statistic ever
+    reaches the encoder. The unnormalized counts are kept as ``windows_raw`` (the
+    Poisson reconstruction target); an existing ``windows_raw`` is left as it is.
 
     Args:
-        session_data:   assembled session dict from assemble_session_data
+        session_data:   assembled session dict from assemble_session_data; modified in
+                        place.
         valid_sessions: sessions to normalize
     """
     for session_name in valid_sessions:
@@ -132,12 +147,20 @@ def normalize_session_windows(
             d["windows_raw"] = d["windows"].copy()
         train_windows = d["windows"][d["train_idx"]]  # (n_train, T, n_neurons)
         mu = train_windows.mean(axis=(0, 1), keepdims=True)  # (1, 1, n_neurons)
+        # The epsilon keeps a unit that is silent in training from dividing by zero.
         sd = train_windows.std(axis=(0, 1), keepdims=True) + 1e-3
         d["windows"] = ((d["windows"] - mu) / sd).astype("float32")
 
 
 def force_session_specific(session_configs: dict) -> None:
-    """Rewrite every session config to be 100% session-specific (n_shared = 0)."""
+    """Rewrite every session config to be 100% session-specific (n_shared = 0).
+
+    Every neuron is then read through its session's own projection, and none through the
+    shared one.
+
+    Args:
+        session_configs: ``build_hybrid_neuron_mapping`` configs; modified in place.
+    """
     for cfg in session_configs.values():
         n = cfg["n_total"]
         cfg["specific_indices"] = list(range(n))
@@ -159,8 +182,23 @@ def apply_window_region_labels(
 ) -> tuple[int, int]:
     """Re-label each window by its modal region and optionally drop straddlers.
 
-    Returns ``(n_straddled, n_total)`` for the caller to summarize. Per-session
-    warn messages go to ``log_fn`` (pass ``print`` to see them).
+    Each session gets a ``straddle`` flag per window. Dropping removes straddling windows
+    from the split indices only; the window arrays keep their length.
+
+    Args:
+        session_data:   assembled sessions; modified in place.
+        valid_sessions: sessions to re-label.
+        paradigm:       maze type string.
+        reduce:         ``"mode"`` re-labels the windows; ``"last"`` keeps the labels
+                        and only flags straddlers.
+        drop_straddle:  remove straddling windows from the split indices.
+        window_size:    bins per window.
+        log_fn:         sink for per-session warnings (pass ``print`` to see them). A
+                        session with fewer position bins than windows is left unchanged.
+
+    Returns:
+        ``(n_straddled, n_total)`` over the re-labeled sessions, for the caller to
+        summarize.
     """
     straddled = total = 0
     for s in valid_sessions:
@@ -204,8 +242,15 @@ def gate_sessions_conformal(
     mean something. Sessions failing either floor are removed from
     ``valid_sessions`` and popped from ``session_data``.
 
-    Returns the dropped ``(session, n_val, n_test)`` triples for the caller to
-    report. Raising on an empty cohort is left to the caller.
+    Args:
+        session_data:   assembled sessions; failing ones are popped.
+        valid_sessions: session list; failing ones are removed in place.
+        min_val:        minimum calibration (val) windows.
+        min_test:       minimum test windows.
+
+    Returns:
+        The dropped ``(session, n_val, n_test)`` triples for the caller to report.
+        Raising on an empty cohort is left to the caller.
     """
     dropped: list[tuple[str, int, int]] = []
     for s in list(valid_sessions):
@@ -221,7 +266,15 @@ def gate_sessions_conformal(
 def assert_chronological_disjoint(
     session_data: dict, valid_sessions: list[str]
 ) -> None:
-    """Assert train < val < test blocks are time-ordered and disjoint per session."""
+    """Assert train < val < test blocks are time-ordered and disjoint per session.
+
+    Args:
+        session_data:   assembled sessions.
+        valid_sessions: sessions to check; each needs non-empty blocks.
+
+    Raises:
+        AssertionError: if a session's blocks overlap or are out of order.
+    """
     for s in valid_sessions:
         d = session_data[s]
         tr, va, te = (np.sort(d[k]) for k in ("train_idx", "val_idx", "test_idx"))
@@ -244,7 +297,8 @@ def compute_class_counts(
         train_sessions:  session names whose train_idx rows are pooled
 
     Returns:
-        {class_int: count_int}
+        {class_int: count_int} for the classes present; empty if no session has
+        training windows.
     """
     parts = [
         session_data[s]["regions"][session_data[s]["train_idx"]]

@@ -39,6 +39,8 @@ def _session(n=10, t=2, n_neurons=3, n_train=6):
 
 
 class TestNormalizeSessionWindows:
+    """Train-only z-scoring, with the raw counts kept aside."""
+
     def test_statistics_come_from_train_rows_only(self):
         """The held-out block keeps its offset, that is the point of train-only
         stats. Fitting on all rows would leak the test distribution into training and
@@ -66,6 +68,8 @@ class TestNormalizeSessionWindows:
 
 
 class TestForceSessionSpecific:
+    """The rewrite that routes every neuron through its session."""
+
     def test_zeros_shared_and_makes_all_specific(self):
         """Cross-mouse neuron IDs are meaningless to tie together, so the pooled runs
         force every neuron session-specific. A stale shared block would silently mix
@@ -111,6 +115,7 @@ class TestAssembleSessionData:
 
     @staticmethod
     def _run(paradigm):
+        """Split rows of a mocked 30-window session whose window 5 has no water."""
         n_windows, win = 30, 10
         n_bins = n_windows * win
         y = np.linspace(
@@ -284,6 +289,8 @@ def _relabel_session():
 
 
 class TestApplyWindowRegionLabels:
+    """Re-labeling by mode and dropping straddlers from the split."""
+
     def test_mode_relabels_and_drops_straddlers(self):
         """The straddling window 1 is relabeled R1 by its mode and removed from every block."""
         d = {"s": _relabel_session()}
@@ -349,6 +356,8 @@ def test_gate_keeps_sessions_exactly_at_the_floors():
 
 
 class TestAssertChronologicalDisjoint:
+    """The guard that fails a split whose blocks overlap or interleave."""
+
     def test_ordered_blocks_pass(self):
         """Train before val before test passes, regardless of the index order stored."""
         d = {"s": {"train_idx": np.array([2, 0, 1]), "val_idx": np.array([3, 4]),
