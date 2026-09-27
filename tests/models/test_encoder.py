@@ -147,3 +147,61 @@ def test_get_latent_is_the_mu_of_get_latent_and_logvar():
     x = torch.randn(_BATCH, _T, 4)
     mu, _ = model.get_latent_and_logvar(x, "S1")
     torch.testing.assert_close(model.get_latent(x, "S1"), mu)
+
+
+def test_a_single_session_specific_neuron_is_used():
+    """A session with exactly one specific neuron gets its own projection, so that neuron
+    moves the latent."""
+    cfg = {"S": {"n_total": 3, "shared_indices": [0, 1], "specific_indices": [2],
+                 "n_specific": 1}}  # fmt: skip
+    torch.manual_seed(0)
+    model = _encoder(cfg).eval()
+    assert "S" in model.encoder.session_projections
+    x = torch.randn(1, _T, 3)
+    y = x.clone()
+    y[..., 2] += 5.0
+    assert not torch.allclose(model.get_latent(x, "S"), model.get_latent(y, "S"))
+
+
+def test_a_session_without_specific_neurons_has_no_projection():
+    """No specific neurons, no projection: the fused input is the shared branch alone."""
+    cfg = {"S": {"n_total": 2, "shared_indices": [0, 1], "specific_indices": [],
+                 "n_specific": 0}}  # fmt: skip
+    model = _encoder(cfg)
+    assert "S" not in model.encoder.session_projections
+    assert model.encoder.shared_idx_S.tolist() == [0, 1]
+    assert model.encoder.specific_idx_S.tolist() == []
+
+
+def test_index_buffers_follow_the_session_config():
+    """Each session's shared and specific column lists are stored as given."""
+    model = _encoder()
+    assert model.encoder.shared_idx_S2.tolist() == [0, 1]
+    assert model.encoder.specific_idx_S2.tolist() == [2, 3, 4]
+
+
+def test_a_vanishing_variance_makes_the_sample_the_mean():
+    """As logvar -> -inf the posterior collapses: the sampled z equals mu."""
+    model = _encoder()
+    mu = torch.tensor([[0.5, -1.5]])
+    z = model.reparameterize(mu, torch.full((1, 2), -200.0))
+    torch.testing.assert_close(z, mu)
+
+
+def test_generation_is_causal_in_time():
+    """The generator unrolls a GRU: the first 3 factors of a 5-step unroll equal a 3-step one."""
+    model = _encoder().eval()
+    z = torch.randn(2, _LD)
+    with torch.no_grad():
+        torch.testing.assert_close(model.generate(z, 5)[:, :3], model.generate(z, 3))
+
+
+def test_rates_are_the_session_readout_of_the_generated_factors():
+    """The Poisson rates are the session's read-out applied to generate(z)."""
+    model = _encoder().eval()
+    with torch.no_grad():
+        out = model(torch.randn(_BATCH, _T, 4), "S1", return_all=True)
+        torch.testing.assert_close(out["factors"], model.generate(out["z"], _T))
+        torch.testing.assert_close(
+            out["rates"], model.session_read_outs["S1"](out["factors"])
+        )

@@ -319,3 +319,16 @@ def test_step2_without_validation_records_none():
     assert hist["val_loss"] == [None, None]
     assert not any("restored" in m for m in logs)
     assert sum("[Step2] Epoch" in m for m in logs) == 2
+
+
+def test_step1_validation_kl_is_the_gaussian_closed_form():
+    """val_kl is KL(N(mu, exp(logvar)) || N(0, 1)) averaged over batch and dims:
+    -0.5 * mean(1 + logvar - mu^2 - exp(logvar)), from the model the epoch ended with."""
+    batch = _step1_batch()
+    batch["S1"]["windows"] = torch.randn(_BATCH, _T, 4)
+    model, hist = _step1(1, val_loader=[batch], kl_warmup_epochs=5)  # no restore
+    model.eval()
+    with torch.no_grad():
+        mu, lv = model.get_latent_and_logvar(batch["S1"]["windows"], "S1")
+    expected = (-0.5 * (1 + lv - mu.pow(2) - lv.exp()).mean()).item()
+    assert hist["val_kl"][0] == pytest.approx(expected, rel=1e-5)
