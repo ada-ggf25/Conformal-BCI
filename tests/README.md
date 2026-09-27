@@ -6,6 +6,7 @@ The complete test suite: `src/` unit tests, documentation checks, and the LaTeX 
 
 ```text
 tests/
+├── chain/               # Tests for src/chain/
 ├── conformal/           # Tests for src/conformal/
 ├── models/              # Tests for src/models/
 ├── utils/               # Tests for src/utils/
@@ -39,6 +40,8 @@ make utils-test      # src/utils/ only
 make models-test     # src/models/ only
 make conformal-test  # src/conformal/ only
 make db-test         # src/db/ only (offline, the MongoDB client is mocked)
+make chain-test      # src/chain/ only
+make src-coverage    # every src/ unit test, with line and branch coverage of src/
 
 make python-lint       # ruff check + ruff format --check over src/, tests/, analyses/
 make python-typecheck  # mypy over src/, the typed tests/ subpackages, and analyses/*.py
