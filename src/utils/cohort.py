@@ -25,7 +25,16 @@ is the only multi-block preset among them.
 
 
 def maze_family(paradigm: str) -> str:
-    """Coarse maze family a paradigm string belongs to."""
+    """Coarse maze family a paradigm string belongs to.
+
+    The family decides the region geometry, so paradigms of one family can be pooled.
+
+    Args:
+        paradigm: paradigm string or cohort label.
+
+    Returns:
+        ``"Y_Maze"``, ``"Nested"`` or ``"More_Water"`` (the Linear maze, and the fallback).
+    """
     if "Y_Maze" in paradigm:
         return "Y_Maze"
     return "Nested" if "Nested" in paradigm else "More_Water"
@@ -37,6 +46,13 @@ def assert_single_family(paradigms: list[str], label: str) -> None:
     The label is checked too, not just the members: a caller-supplied
     ``paradigm_label`` is free text, and a mislabeled merge would route the
     region labeler to the wrong geometry.
+
+    Args:
+        paradigms: the pooled paradigm strings.
+        label:     the cohort's display label.
+
+    Raises:
+        AssertionError: if the paradigms and the label span more than one family.
     """
     families = {maze_family(p) for p in [*paradigms, label]}
     assert len(families) == 1, (
@@ -46,7 +62,18 @@ def assert_single_family(paradigms: list[str], label: str) -> None:
 
 @dataclass
 class CohortResult:
-    """The pooled cohort: which paradigms, mice, and sessions survived discovery."""
+    """The pooled cohort: which paradigms, mice, and sessions survived discovery.
+
+    Attributes:
+        paradigms:           the pooled paradigm strings.
+        label:               display and artifact label of the cohort.
+        n_classes:           number of regions of the cohort's maze family.
+        group:               every pooled session, sorted by name.
+        session_to_mouse:    session name to mouse id.
+        session_to_paradigm: session name to the paradigm it was pooled under.
+        cohort_mice:         mice that contributed at least one session, in pool order.
+        skipped:             ``(mouse_id, reason)`` for every mouse that contributed none.
+    """
 
     paradigms: list[str]
     label: str
@@ -70,7 +97,8 @@ def discover_cohort(
 
     Args:
         db:             pymongo Database.
-        target_paradigm: a single paradigm string, a merged-preset name
+        target_paradigm: a single paradigm string, a merged-preset name (a key of
+                        ``MERGED``), or a list of paradigm strings to pool.
         target_mice:    restrict the pool to these mouse ids. ``None`` = every
                         mouse from ``get_all_mice``.
         exclude_mice:   mouse ids to hold out of the pool.
@@ -79,9 +107,14 @@ def discover_cohort(
                         name the same maze family as the pooled paradigms.
 
     Returns:
-        A ``CohortResult``. Raises ``RuntimeError`` if no mouse has >= 2
-        valid sessions, and ``AssertionError`` if the pool spans maze families
-        or produces a duplicate session name.
+        A ``CohortResult``. A mouse contributes the valid sessions of every pooled
+        paradigm that ``resolve_paradigm`` accepts; one with none is listed in
+        ``skipped``.
+
+    Raises:
+        RuntimeError: if no mouse has >= 2 valid sessions in any pooled paradigm.
+        AssertionError: if the pool spans maze families or produces a duplicate
+            session name.
     """
     if isinstance(target_paradigm, str) and target_paradigm in MERGED:
         # a merged-preset name (e.g. "Nested_All")
@@ -158,7 +191,8 @@ def apply_session_exclusions(
     Args:
         sessions: candidate session ids.
         exclude:  session ids to drop. ``None`` or empty keeps every session.
-        log_fn:   optional for a one-line summary of what was dropped (pass ``print``).
+        log_fn:   optional sink for a one-line summary of what was dropped (pass
+                  ``print``); requested sessions not in the pool are reported too.
 
     Returns:
         The kept session ids, in their original order.

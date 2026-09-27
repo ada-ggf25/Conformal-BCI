@@ -40,6 +40,8 @@ def test_maze_family(paradigm, family):
 
 
 class TestAssertSingleFamily:
+    """A pool must stay within one maze geometry, label included."""
+
     def test_one_family_passes(self):
         """The two Nested blocks and a Nested label are one family."""
         assert_single_family(["Nested_Maze", "Nested_Maze+2"], "Nested_All")
@@ -80,6 +82,8 @@ def _mice(ids: list[int]):
 
 
 class TestDiscoverCohort:
+    """How mice and sessions are pooled, labeled, skipped, or refused."""
+
     def test_merged_preset_pools_both_blocks(self):
         """Nested_All pools Nested_Maze and Nested_Maze+2; a mouse may contribute through
         either block and each session remembers which block it came from."""
@@ -178,6 +182,8 @@ class TestDiscoverCohort:
 
 
 class TestApplySessionExclusions:
+    """Hand-picked exclusions drop exactly the named sessions."""
+
     def test_drops_listed_sessions_and_keeps_order(self):
         """Excluded sessions are removed; the rest keep their original order."""
         logs: list[str] = []
