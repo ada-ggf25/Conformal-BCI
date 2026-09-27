@@ -13,6 +13,8 @@ import numpy as np
 
 from ..conformal.calibrate import compute_quantile
 
+# Where a region's threshold came from: its own block, a pool with past blocks, or the
+# session's global (all-region) threshold.
 OWN, BORROWED, GLOBAL = "own", "borrowed", "global"
 
 
@@ -22,12 +24,28 @@ def region_floor(alpha: float) -> int:
     ``ceil(1/alpha) - 1`` is the smallest block with a finite conformal quantile, and there the
     quantile is the block's largest score. Requiring more (at least ``ceil(1/alpha)`` windows, the
     usual rule of thumb) sends a region that small to the pooled or global threshold instead.
+
+    Args:
+        alpha: miscoverage level.
+
+    Returns:
+        ``ceil(1/alpha) - 1``; a region needs strictly more windows than this.
     """
     return int(np.ceil(1.0 / alpha)) - 1
 
 
 def borrow_depth(rule: str) -> int:
-    """How many past sessions a rule may borrow from: ``"A"`` -> 0, ``"B3"`` -> 3."""
+    """How many past sessions a rule may borrow from: ``"A"`` -> 0, ``"B3"`` -> 3.
+
+    Args:
+        rule: ``"A"`` or ``"B<M>"``.
+
+    Returns:
+        The borrow depth ``M`` (0 for rule A).
+
+    Raises:
+        ValueError: if the rule is neither form.
+    """
     if rule == "A":
         return 0
     if rule.startswith("B") and rule[1:].isdigit():
@@ -78,6 +96,15 @@ def pooled_qhats(
 def marginal_qhats(
     own: dict[str, np.ndarray], n_classes: int, alpha: float
 ) -> tuple[dict[int, float], dict[int, str]]:
-    """Standard split conformal: one threshold for every region, from the own block."""
+    """Standard split conformal: one threshold for every region, from the own block.
+
+    Args:
+        own:       this session's calibration block.
+        n_classes: number of regions.
+        alpha:     miscoverage level.
+
+    Returns:
+        ``(qhats, levels)`` in the form of ``pooled_qhats``, every level ``"global"``.
+    """
     q = compute_quantile(own["scores"], alpha)
     return dict.fromkeys(range(n_classes), q), dict.fromkeys(range(n_classes), GLOBAL)
