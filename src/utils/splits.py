@@ -13,8 +13,8 @@ def chronological_task_split(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Chronological within-session split over task windows only.
 
-    The retained task windows are then partitioned into three contiguous, time-ordered
-    blocks (defaults 80/10/10):
+    Non-task windows are left out entirely. The task windows are then partitioned into three
+    contiguous, time-ordered blocks (defaults 80/10/10):
 
         train - Step 1 and Step 2 model training, plus fitting the learned scale sigma
         val   - early stopping / epoch selection and the conformal quantile q_hat
@@ -30,6 +30,9 @@ def chronological_task_split(
     Returns:
         (train_idx, val_idx, test_idx) - three disjoint integer arrays indexing into the
         original window array, in chronological order.
+
+    Raises:
+        ValueError: if the three fractions do not sum to 1.
     """
     if not np.isclose(train_frac + val_frac + test_frac, 1.0):
         raise ValueError(
