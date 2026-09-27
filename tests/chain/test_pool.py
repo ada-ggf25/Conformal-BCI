@@ -77,6 +77,16 @@ def test_unknown_rules_are_refused(rule):
 
 
 @pytest.mark.parametrize("alpha", [0.05, 0.1, 0.2, 0.25, 0.3])
+def test_the_floor_is_the_smallest_block_with_a_finite_quantile(alpha):
+    """ceil((n + 1)(1 - alpha)) <= n first holds at n = ceil(1/alpha) - 1: a block that size
+    has a finite quantile (its largest score), one window fewer has none."""
+    n = region_floor(alpha)
+    scores = np.arange(n, dtype=float)
+    assert compute_quantile(scores, alpha) == scores.max()
+    assert compute_quantile(scores[:-1], alpha) == np.inf
+
+
+@pytest.mark.parametrize("alpha", [0.05, 0.1, 0.2, 0.25, 0.3])
 def test_a_region_above_the_floor_always_has_a_finite_quantile(alpha):
     """The floor exists so that an "own" or "borrowed" threshold is never +inf: one window
     more than the floor always satisfies ceil((n + 1)(1 - alpha)) <= n."""
@@ -114,3 +124,11 @@ def test_marginal_with_a_tiny_block_admits_everything():
     """Too few calibration windows for any finite threshold: every q_hat is +inf."""
     q, _ = marginal_qhats(_block([(0, 0.1)] * 3), n_classes=2, alpha=0.1)
     assert q == {0: np.inf, 1: np.inf}
+
+
+def test_floor_scales_with_alpha():
+    """At alpha 0.2 a region needs more than ceil(1/0.2) - 1 = 4 windows: 4 is starved, 5 is own."""
+    own = _block([(0, 1.0)] * 4 + [(1, 1.0)] * 5)
+    _, lv = pooled_qhats("A", own, [], n_classes=2, alpha=0.2)
+    assert lv == {0: GLOBAL, 1: OWN}
+    assert region_floor(0.2) == 4 and region_floor(0.05) == 19

@@ -85,3 +85,23 @@ def test_prepare_chain_resplits_warmup_before_normalizing():
     assert tested["windows"][:6].max() == 0.0
     assert tested["windows"][9, 0, 0] == pytest.approx(10_000.0, rel=1e-4)
     assert "windows_raw" in warm and warm["windows_raw"][9, 0, 0] == 10.0
+
+
+def test_chain_order_does_not_depend_on_the_input_order():
+    """Any permutation of the same sessions gives the same chain."""
+    sessions = ["M2_240110", "M1_240111", "M1_240110", "M3_240109", "M10_240110"]
+    assert chain_order(sessions) == chain_order(sessions[::-1])
+    assert (
+        chain_order(sessions)[0] == "M3_240109"
+        and chain_order(sessions)[-1] == "M1_240111"
+    )
+
+
+def test_a_single_mouse_is_new_only_once():
+    """Every session after a mouse's first is a returning one."""
+    chain = ["M1_1", "M1_2", "M1_3"]
+    assert first_session_flags(chain, dict.fromkeys(chain, "M1")) == [
+        True,
+        False,
+        False,
+    ]

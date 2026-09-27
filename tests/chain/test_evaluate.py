@@ -43,3 +43,16 @@ def test_scale_changes_membership_but_not_the_decoder_error():
     assert ev["size_over_k"].tolist() == [0.5, 1.0]
     assert ev["error"].tolist() == [1.0, 1.0]
     assert ev["level"].tolist() == ["borrowed", "borrowed"]
+
+
+def test_a_region_absent_from_the_thresholds_is_an_error():
+    """Every region needs a threshold; a missing one raises instead of silently excluding it."""
+    import pytest
+
+    test = {
+        "probs": np.array([[0.5, 0.5]]),
+        "sigma": np.ones(1),
+        "labels": np.array([0]),
+    }
+    with pytest.raises(KeyError):
+        evaluate_block(test, {0: 0.5}, {0: "own", 1: "own"}, 2)

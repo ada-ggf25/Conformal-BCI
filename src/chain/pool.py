@@ -17,7 +17,12 @@ OWN, BORROWED, GLOBAL = "own", "borrowed", "global"
 
 
 def region_floor(alpha: float) -> int:
-    """A region needs more than this many calibration windows for its own quantile."""
+    """A region needs more than this many calibration windows for its own quantile.
+
+    ``ceil(1/alpha) - 1`` is the smallest block with a finite conformal quantile, and there the
+    quantile is the block's largest score. Requiring more (at least ``ceil(1/alpha)`` windows, the
+    usual rule of thumb) sends a region that small to the pooled or global threshold instead.
+    """
     return int(np.ceil(1.0 / alpha)) - 1
 
 

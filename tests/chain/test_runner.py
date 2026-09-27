@@ -174,3 +174,78 @@ def test_checkpoint_write_is_atomic(tmp_path):
         and state["model"] == {"w": 1}
         and state["rows"][0]["session"] == "S"
     )
+
+
+def test_starved_regions_borrow_from_past_sessions():
+    """Odd sessions see their last region only in the test block, so it is starved in their
+    own calibration block and must borrow: some test windows are labeled "borrowed"."""
+    levels = np.concatenate(
+        [r["methods"]["chain_B3"]["level"] for r in _uninterrupted()]
+    )
+    assert "borrowed" in set(levels.tolist())
+
+
+def test_deeper_borrowing_never_falls_back_more_often():
+    """B3 pools a superset of B1's past, so wherever B1 had enough windows B3 does too: B3 has
+    no more global fallbacks than B1, and the regions with their own threshold are the same."""
+    for r in _uninterrupted():
+        b3, b1 = r["methods"]["chain_B3"]["level"], r["methods"]["chain_B1"]["level"]
+        assert (b3 == "global").sum() <= (b1 == "global").sum()
+        np.testing.assert_array_equal(b3 == "own", b1 == "own")
+
+
+def test_the_fresh_baseline_is_trained_from_scratch(monkeypatch):
+    """The baseline is a new model per session with standard conformal: fitted from scratch
+    (with the KL warm-up) and without a sigma."""
+    from src.chain import runner
+
+    calls: list[dict] = []
+    real_fit = runner.ChainModel.fit
+
+    def spy(self, *args, **kwargs):
+        """Record how each fit is called, then fit for real."""
+        calls.append(kwargs)
+        return real_fit(self, *args, **kwargs)
+
+    monkeypatch.setattr(runner.ChainModel, "fit", spy)
+    cfg = ChainConfig(seed=0, warmup=1, sensitivity=(), sweep_targets=(0.9,),
+                      budget=CFG.budget)  # fmt: skip
+    _run(2, cfg=cfg)
+    baseline = [c for c in calls if c.get("train_sigma") is False]
+    assert len(baseline) == 1 and baseline[0]["from_scratch"] is True
+    chain_fits = [c for c in calls if c.get("train_sigma", True)]
+    assert [c["from_scratch"] for c in chain_fits] == [True, False]
+
+
+def test_unit_scores_match_a_model_without_sigma():
+    """The sigma = 1 ablation scores exactly like a model that has no sigma at all."""
+    from src.chain.stages import ChainModel
+
+    blk = {"probs": np.array([[0.3, 0.7], [0.9, 0.1]]), "labels": np.array([0, 1]),
+           "u": np.zeros((2, 4))}  # fmt: skip
+    m = ChainModel("S", {"n_total": 2, "shared_indices": [], "specific_indices": [0, 1],
+                         "n_specific": 2}, 2, torch.device("cpu"))  # fmt: skip
+    np.testing.assert_array_equal(_unit_scores(blk)["scores"], m.score(blk)["scores"])
+
+
+def test_a_new_checkpoint_replaces_the_old_one(tmp_path):
+    """Saving again overwrites the previous checkpoint with the newer position."""
+
+    class _Model:
+        def state(self):
+            """A stand-in model state."""
+            return {}
+
+    path = tmp_path / "chain.pt"
+    _save(path, 1, _Model(), [])
+    _save(path, 2, _Model(), [{"session": "S"}])
+    state = torch.load(path, weights_only=False)
+    assert state["next"] == 2 and len(state["rows"]) == 1
+
+
+def test_chain_config_is_immutable():
+    """A run's configuration cannot be changed once built (it is recorded in the bundle)."""
+    import dataclasses
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        CFG.seed = 1  # type: ignore[misc]
