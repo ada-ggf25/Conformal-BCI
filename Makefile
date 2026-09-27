@@ -6,7 +6,7 @@ PAPER := paper
 	src-test docs-test \
 	mkdocs-test mkdocs-build mkdocs-serve \
 	db-test python-lint python-typecheck ci-test \
-	maze maze-quick pilot-chain cross-maze
+	maze maze-quick cross-maze
 
 # First-time setup, in three tiers.
 #
@@ -112,10 +112,6 @@ maze:
 
 maze-quick:
 	uv run python analyses/run_mazes.py --quick --paradigm $(_paradigm_name) $(_seed_args)
-
-# Pilot of the session-by-session chain vs a fresh model per session (one maze, one seed).
-pilot-chain:
-	uv run python analyses/pilot_chain.py --paradigm $(if $(PARADIGM),$(PARADIGM),Nested_All)
 
 cross-maze:
 	uv run python -m nbconvert --to notebook --execute analyses/cross_maze.ipynb \
