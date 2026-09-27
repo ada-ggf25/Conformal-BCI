@@ -73,6 +73,8 @@ class TestWindowTaskMask:
 
 
 class TestCreateWindowsWithRegions:
+    """A window's content and label must come from the same bins."""
+
     def test_region_assigned_from_last_bin_of_window(self):
         """A window takes its region label from its final bin, not its first or its mean."""
         neural = np.zeros((20, 2), dtype=np.float32)
@@ -108,6 +110,8 @@ class TestCreateWindowsWithRegions:
 
 
 class TestBuildHybridNeuronMapping:
+    """Which neurons count as shared across the pooled sessions."""
+
     @patch("src.data.hybrid_io.get_session_neuron_ids")
     def test_shared_ids_are_the_intersection(self, mock_ids):
         """The shared/specific split is the pooled model's input contract: a wrong
@@ -239,6 +243,8 @@ class TestTrialWaterPosition:
 
 
 class TestGetSessionNeuronIds:
+    """A session's neurons, as the neuron-count gate sees them."""
+
     @patch("src.data.hybrid_io.session_name_to_date_id")
     @patch("src.data.hybrid_io.get_neural")
     def test_ids_are_the_first_trials_neural_keys(self, neu, did):
@@ -261,6 +267,8 @@ class TestGetSessionNeuronIds:
 
 
 class TestNeuronMappingIndices:
+    """Every neuron's column and the projection it is read through."""
+
     @patch("src.data.hybrid_io.get_session_neuron_ids")
     def test_column_layout_of_each_session(self, mock_ids):
         """Columns follow each session's sorted ids; the shared and specific index lists
@@ -357,6 +365,8 @@ def test_xy_columns_are_found_by_substring():
 
 
 class TestTrialWaterPositionEdges:
+    """When a Linear trial has no usable water position."""
+
     def test_missing_channels_mean_no_water(self):
         """Without a Y channel or a distance channel the water position is undefined."""
         assert trial_water_position({"Direct_Distance_to_Water": [1.0]}) is None
@@ -390,6 +400,8 @@ def _wire_trial_data(db, docs, neural, behavior):
 
 
 class TestExtractionAcrossTrials:
+    """Which trials extraction keeps, and how their bins line up."""
+
     @patch("src.data.hybrid_io.session_name_to_date_id")
     @patch("src.data.hybrid_io.get_neural")
     @patch("src.data.hybrid_io.get_behavior")
@@ -472,6 +484,8 @@ class TestExtractionAcrossTrials:
 
 
 class TestWindowTaskMaskEdges:
+    """The task mask must line up window for window with extraction."""
+
     @patch("src.data.hybrid_io.session_name_to_date_id")
     @patch("src.data.hybrid_io.get_neural")
     @patch("src.data.hybrid_io.get_behavior")
@@ -528,6 +542,8 @@ class TestWindowTaskMaskEdges:
 
 
 class TestBuildExampleRaster:
+    """The illustrative raster reads the first trial that has spikes."""
+
     @patch("src.data.hybrid_io.session_name_to_date_id")
     @patch("src.data.hybrid_io.get_neural")
     def test_rates_are_counted_from_the_first_spike_of_the_first_spiking_trial(
@@ -572,6 +588,8 @@ class TestBuildExampleRaster:
 
 
 class TestWindowing:
+    """Windowing edge cases: the last-bin label, the tail, and dispatch."""
+
     def test_label_reads_x_from_the_last_bin_too(self):
         """At y = 7000 the Y maze splits on the sign of x: only the last bin is on the right,
         so the window is R7, not R6."""
@@ -610,6 +628,8 @@ class TestWindowing:
 
 class TestWindowRegionLabels:
     # Y maze, 3 windows of 4 bins. Bin labels by y: <1250 -> 0, <2500 -> 1, x>=0 & <4250 -> 4.
+    """The last and mode reductions, and the straddle flag."""
+
     Y = np.array(
         [0, 0, 0, 0, 0, 1300, 1300, 1300, 1300, 1300, 3000, 0], dtype=float
     )  # bin labels: (0, 0, 0, 0), (0, 1, 1, 1), (1, 1, 4, 0)

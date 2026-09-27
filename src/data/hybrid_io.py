@@ -1,4 +1,14 @@
-"""Neural data extraction and windowing pipeline."""
+"""Neural data extraction and windowing pipeline.
+
+Turns a session's trials in MongoDB into the arrays the models consume: one column per
+neuron (``build_hybrid_neuron_mapping``), spike rates binned at ``BIN_WIDTH_SEC`` with
+position averaged onto the same bins (``extract_neural_and_position_hybrid``), then
+non-overlapping windows labeled with a maze region (``create_windows_with_regions``,
+``window_region_labels``) and flagged as task or not (``window_task_mask``).
+
+Timestamps: neural spike and trial times are sample indices at 10 kHz; behavior trial
+bounds are in days.
+"""
 
 from __future__ import annotations
 
@@ -20,7 +30,17 @@ from .regions import (
 
 
 def get_session_neuron_ids(db, session_name: str) -> list[str]:
-    """Return all neuron ID strings recorded for the first trial of a session."""
+    """Return all neuron ID strings recorded for the first trial of a session.
+
+    Only the first trial is read: its units are taken as the session's units.
+
+    Args:
+        db (Database): pymongo Database.
+        session_name: e.g. ``"M21_250214"``.
+
+    Returns:
+        The neuron ids (``str(neurons._id)``), or an empty list if the session has no trial.
+    """
     date_id = session_name_to_date_id(db, session_name)
     trial = db["trials"].find_one({"date_db_id": date_id})
     if not trial:
@@ -44,12 +64,12 @@ def build_example_raster(
     the training pipeline.
 
     Args:
-        db:              pymongo Database
-        session_name:    e.g. "M19_240918"
-        window_sec:      length of the window shown, from the trial's first spike (default 30s)
-        max_neurons:     cap on rows in the raster, highest-firing neurons first (default 40)
-        bin_width_sec:   time bin width in seconds (default: the pipeline's own BIN_WIDTH_SEC)
-        samples_per_sec: spike sample-index rate (10 kHz)
+        db:              pymongo Database.
+        session_name:    e.g. ``"M19_240918"``.
+        window_sec:      length of the window shown, from the trial's first spike (default 30 s).
+        max_neurons:     cap on rows in the raster, highest-firing neurons first (default 40).
+        bin_width_sec:   time bin width in seconds (default: the pipeline's own BIN_WIDTH_SEC).
+        samples_per_sec: spike sample-index rate (10 kHz).
 
     Returns:
         ``{"rates": (n_shown, n_bins) array of Hz, "n_shown": int}``, or ``None`` if no trial in
@@ -91,9 +111,25 @@ def build_example_raster(
 def build_hybrid_neuron_mapping(db, session_names: list[str]) -> tuple[list[str], dict]:
     """Compute the shared neuron set and per-session column index configs.
 
+    A session's columns are its own neuron ids in sorted order. A neuron recorded in every
+    session is "shared", and every other neuron is "specific" to its session. The encoder
+    reads the two groups through separate projections.
+
+    Args:
+        db (Database): pymongo Database.
+        session_names: the sessions to map; each must have at least one trial.
+
     Returns:
-        shared_neuron_ids: sorted list of neuron IDs present in all sessions
-        session_configs:   dict mapping session_name
+        ``(shared_neuron_ids, session_configs)``. ``shared_neuron_ids`` is the sorted list of
+        neuron ids present in every session. ``session_configs`` maps each session name to a
+        dict with keys:
+
+        - ``all_ids``: the session's neuron ids, sorted; column ``i`` is ``all_ids[i]``.
+        - ``specific_ids``: the ids not shared with every other session.
+        - ``n_total``, ``n_shared``, ``n_specific``: the column counts.
+        - ``shared_indices``: the shared neurons' columns, in ``shared_neuron_ids`` order.
+        - ``specific_indices``: the specific neurons' columns, ascending.
+        - ``neuron_id_to_idx``: neuron id to column.
     """
     session_neuron_ids: dict[str, set] = {}
     for session_name in session_names:
@@ -130,7 +166,20 @@ def build_hybrid_neuron_mapping(db, session_names: list[str]) -> tuple[list[str]
 
 
 def _trial_bin_count(doc: dict, bin_width_sec: float) -> int | None:
-    """Number of neural bins a trial document spans, or None if it is unusable."""
+    """Number of neural bins a trial document spans, or None if it is unusable.
+
+    The trial's neural end time falls back to its start plus the behavior duration when
+    it is missing. Behavior times are in days and neural times are 10 kHz sample indices,
+    hence the ``86400 * 10000`` conversion.
+
+    Args:
+        doc:           a ``trials`` document.
+        bin_width_sec: time bin width in seconds.
+
+    Returns:
+        ``ceil(duration / bin_width_sec)``, or None when the start is missing, both end
+        times are missing, or the duration is not positive.
+    """
     t_start_n = doc.get("trial_start_neural_data")
     t_end_n = doc.get("trial_end_neural_data")
     t_start_b = doc.get("trial_start_behavior_data")
@@ -150,7 +199,17 @@ def _trial_bin_count(doc: dict, bin_width_sec: float) -> int | None:
 
 
 def _xy_columns(bdata: dict) -> tuple[str | None, str | None]:
-    """Names of the X and Y position channels in a behavior document."""
+    """Names of the X and Y position channels in a behavior document.
+
+    Channel names vary between recordings (a prefix or suffix around ``X_Position``), so
+    any key containing the name matches; the last match wins.
+
+    Args:
+        bdata: a behavior document from ``get_behavior``.
+
+    Returns:
+        ``(x_col, y_col)``, each None if no such channel exists.
+    """
     x_col = y_col = None
     for key in bdata:
         if "X_Position" in key or key == "X_Position":
@@ -172,6 +231,14 @@ def trial_water_position(
     ``Y_Position + Direct_Distance_to_Water`` is the reward's position and is constant within a
     trial. Samples are rounded to 100 units; the modal value, merged with its +-100 neighbors
     (rounding wobble), must cover at least ``min_share`` of the samples.
+
+    Args:
+        bdata:     a behavior document from ``get_behavior``.
+        min_share: minimum share of finite samples within 100 units of the mode.
+
+    Returns:
+        The modal water position, or None when the Y or water channel is missing, no sample
+        is finite, or the mode covers too small a share of the samples.
     """
     _, y_col = _xy_columns(bdata)
     if y_col is None or WATER_CHANNEL not in bdata:
@@ -203,11 +270,16 @@ def extract_neural_and_position_hybrid(
     bin-averaged onto the same time axis as the neural bins. Every bin of a trial carries that
     trial's water position (``trial_water_position``), NaN when it is ill-defined or absent.
 
+    A trial is skipped when its bin count is undefined (``_trial_bin_count``), or it has no
+    spikes, no behavior document, or no X/Y channel. ``window_task_mask`` applies the same
+    rules, so its bins stay aligned with these.
+
     Args:
-        db:             pymongo Database
-        session_name:   e.g. "M21_250214"
-        session_config: entry from build_hybrid_neuron_mapping
-        bin_width_sec:  time bin width in seconds
+        db:             pymongo Database.
+        session_name:   e.g. ``"M21_250214"``.
+        session_config: the session's entry from ``build_hybrid_neuron_mapping``; it fixes
+                        the column of every neuron.
+        bin_width_sec:  time bin width in seconds.
 
     Returns:
         (neural, x, y, water) where:
@@ -247,7 +319,7 @@ def extract_neural_and_position_hybrid(
         for neuron_id, spikes in ndata.items():
             if neuron_id in neuron_id_to_idx:
                 col_idx = neuron_id_to_idx[neuron_id]
-                spikes_sec = np.array(spikes) / 10000
+                spikes_sec = np.array(spikes) / 10000  # 10 kHz sample index -> seconds
                 counts, _ = np.histogram(
                     spikes_sec, bins=np.arange(n_bins + 1) * bin_width_sec
                 )
@@ -264,6 +336,8 @@ def extract_neural_and_position_hybrid(
         x_data = np.array(bdata[x_col])
         y_data = np.array(bdata[y_col])
 
+        # Behavior is sampled at its own (~90 Hz) rate: spread its samples evenly over
+        # the trial's neural bins and average the samples that fall in each bin.
         behavior_bin_size = len(x_data) / n_bins
         trial_x = np.zeros(n_bins)
         trial_y = np.zeros(n_bins)
@@ -295,7 +369,14 @@ def extract_neural_and_position_hybrid(
 def _classify_bin(x: float, y: float, paradigm: str, water: float) -> int:
     """Region label for a single position sample, dispatched on paradigm.
 
-    ``water`` (the trial's water position) is used by the Linear maze only.
+    Args:
+        x:        lateral position.
+        y:        position along the maze.
+        paradigm: paradigm string; matched by substring like ``get_num_classes``.
+        water:    the trial's water position, used by the Linear maze only.
+
+    Returns:
+        The region label, or -1 for a Linear-maze bin without a usable water position.
     """
     if "Y_Maze" in paradigm:
         return classify_point_ymaze(x, y)
@@ -314,19 +395,20 @@ def create_windows_with_regions(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Slide a non-overlapping window over neural_data and assign region labels.
 
-    Region label is taken from the position at the last bin of each window.
+    Region label is taken from the position at the last bin of each window. Trailing bins
+    that do not fill a whole window are dropped.
 
     Args:
-        neural_data:  (n_bins, n_neurons) float32 spike rate array
-        x_positions:  (n_bins,) X coordinates
-        y_positions:  (n_bins,) Y coordinates
-        window_size:  bins per window (WINDOW_SIZE=10 → 1 s at 100 ms bins)
+        neural_data:  (n_bins, n_neurons) float32 spike rate array.
+        x_positions:  (n_bins,) X coordinates.
+        y_positions:  (n_bins,) Y coordinates.
+        window_size:  bins per window (WINDOW_SIZE=10 → 1 s at 100 ms bins).
         paradigm:     maze type string.
-        water:        (n_bins,) water position per bin (Linear maze only; NaN if none)
+        water:        (n_bins,) water position per bin (Linear maze only; NaN if none).
 
     Returns:
-        windows: (n_windows, window_size, n_neurons)
-        regions: (n_windows,) int region labels
+        ``(windows, regions)``: the (n_windows, window_size, n_neurons) windows and their
+        (n_windows,) int region labels, with ``n_windows = n_bins // window_size``.
     """
     n_windows = len(neural_data) // window_size
     if water is None:
@@ -356,14 +438,19 @@ def window_task_mask(
 ) -> np.ndarray:
     """Boolean mask (n_windows,) marking windows that lie entirely within a task trial.
 
+    A task trial is one whose ``trial_status`` is ``"W"``. Trials are skipped by the same
+    rules as ``extract_neural_and_position_hybrid``, so the mask lines up window for window
+    with its output; the caller still checks the lengths match.
+
     Args:
-        db:            pymongo Database
-        session_name:  e.g. "M50_250411"
-        window_size:   bins per window (WINDOW_SIZE=10 -> 1 s at 100 ms bins)
-        bin_width_sec: time bin width in seconds (must match the extraction)
+        db:            pymongo Database.
+        session_name:  e.g. ``"M50_250411"``.
+        window_size:   bins per window (WINDOW_SIZE=10 -> 1 s at 100 ms bins).
+        bin_width_sec: time bin width in seconds (must match the extraction).
 
     Returns:
-        1-D boolean ndarray of length n_windows. True == task (W) window.
+        1-D boolean ndarray of length n_windows. True == task (W) window. Empty when no
+        trial is usable.
     """
     date_id = session_name_to_date_id(db, session_name)
     trial_ids = [
@@ -415,10 +502,21 @@ def window_region_labels(
     This helper classifies every bin in the window and reduces:
 
       reduce="last":  last-bin label: identical to create_windows_with_regions.
-      reduce="mode":  modal (most frequent) region across the window's bins.
+      reduce="mode":  modal (most frequent) region across the window's bins; a tie goes
+                      to the smallest label.
+
+    Args:
+        x_positions: (n_bins,) X coordinates.
+        y_positions: (n_bins,) Y coordinates.
+        window_size: bins per window.
+        paradigm:    maze type string.
+        water:       (n_bins,) water position per bin (Linear maze only; NaN if none).
+        reduce:      ``"last"`` or ``"mode"``; any other value behaves as ``"last"``.
 
     Returns:
-        (regions, straddle): both length n_windows = len(x_positions) // window_size.
+        ``(regions, straddle)``, both of length ``n_windows = len(x_positions) //
+        window_size``: the int64 labels, and a boolean flag for windows whose bins span
+        more than one region.
     """
     n_windows = len(x_positions) // window_size
     if water is None:
