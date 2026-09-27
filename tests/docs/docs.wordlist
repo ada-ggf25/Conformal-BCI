@@ -55,3 +55,20 @@ Hyperparameters
 NeurIPS
 preprint
 quantile
+
+# MkDocs pages: pipeline and API terms
+BSON
+checkpointed
+config
+configs
+contrastive
+dicts
+docstring
+docstrings
+GridFS
+GRU
+hyperparameters
+latents
+miscoverage
+unnormalized
+zstd
