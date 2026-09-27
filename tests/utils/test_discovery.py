@@ -94,6 +94,8 @@ def test_all_mice_skips_subjects_without_an_id():
 
 
 class TestGetContextsForMouse:
+    """Which of a mouse's dates count as sessions, by paradigm."""
+
     def test_only_sessions_with_a_trial_and_spikes_are_listed(self):
         """A date needs its own M<id>_<YYMMDD> path, a trial, and a spike file to count."""
         db = _db(
@@ -150,6 +152,8 @@ def _contexts(contexts: dict[str, list[str]]):
 
 
 class TestResolveParadigm:
+    """Which paradigm a mouse is analyzed under, and its valid sessions."""
+
     def test_the_paradigm_with_most_valid_sessions_wins(self):
         """Y has three sessions but only one with enough neurons; Linear has two valid ones."""
         ctx = {
