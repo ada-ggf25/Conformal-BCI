@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from src.chain.runner import SWEEP_TARGETS
+
 _PATH = Path(__file__).resolve().parents[2] / "analyses" / "run_mazes.py"
 _spec = importlib.util.spec_from_file_location("run_mazes", _PATH)
 assert _spec is not None and _spec.loader is not None
@@ -164,8 +166,9 @@ class TestMain:
         assert sweep.calls[0][2]["EXCLUDE_SESSIONS"] == []
 
     def test_quick_runs_one_seed_on_small_budgets_in_its_own_tree(self, sweep):
-        """--quick uses the first seed, cut budgets, and the _quick tree, so a smoke run can
-        never be mistaken for (or skip) a real bundle."""
+        """--quick uses the first seed, cut budgets, a shorter sweep that keeps the deployed
+        90% target, and the _quick tree, so a smoke run can never be mistaken for (or skip) a
+        real bundle."""
         _complete(
             run_mazes.bundle_dir(sweep.root, "Y_Maze", 42)
         )  # a real bundle exists
@@ -173,7 +176,9 @@ class TestMain:
         assert len(sweep.calls) == 1
         _, out, params = sweep.calls[0]
         assert params["SEED"] == run_mazes.DEFAULT_SEEDS[0]
-        assert "_quick" in out.parts and params["QUICK_SWEEP"] is True
+        assert "_quick" in out.parts
+        assert 0.9 in params["SWEEP_TARGETS"]
+        assert len(params["SWEEP_TARGETS"]) < len(SWEEP_TARGETS)
         assert params["STEP_EPOCHS"] < 10 and params["MLP_EPOCHS"] < 10
 
 

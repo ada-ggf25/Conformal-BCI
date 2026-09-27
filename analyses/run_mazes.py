@@ -136,7 +136,7 @@ def main() -> int:
             EARLY_STOP_PATIENCE=2,
             MLP_EPOCHS=5,
             MLP_EARLY_STOP_PATIENCE=3,
-            QUICK_SWEEP=True,
+            SWEEP_TARGETS=[0.5, 0.9],
         )
         if args.quick
         else {}
