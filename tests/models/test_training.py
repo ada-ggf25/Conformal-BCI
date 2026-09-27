@@ -334,3 +334,48 @@ def test_step1_validation_kl_is_the_gaussian_closed_form():
         mu, lv = model.get_latent_and_logvar(batch["S1"]["windows"], "S1")
     expected = (-0.5 * (1 + lv - mu.pow(2) - lv.exp()).mean()).item()
     assert hist["val_kl"][0] == pytest.approx(expected, rel=1e-5)
+
+
+def _unseen_class_val(windows: bool):
+    """Validation batches: one of class 0, then one entirely of class 1 (absent in training)."""
+    torch.manual_seed(1)
+    if windows:
+        seen, unseen = _step1_batch(), _step1_batch()
+        seen["S1"]["windows"] = torch.randn(_BATCH, _T, 4)
+        unseen["S1"]["regions"] = torch.ones(_BATCH, dtype=torch.long)
+    else:
+        seen = (torch.randn(_BATCH, _SL, _LD), *_step2_batch()[1:])
+        unseen = (torch.randn(_BATCH, _SL, _LD), torch.ones(_BATCH, dtype=torch.long),
+                  torch.zeros(_BATCH, dtype=torch.long))  # fmt: skip
+    return [seen, unseen]
+
+
+def test_step1_validation_ignores_a_batch_of_classes_absent_from_training():
+    """A class missing from training has weight 0: a validation batch made only of it adds
+    nothing, so val_region is the plain cross-entropy over the class-0 windows, not NaN."""
+    val = _unseen_class_val(windows=True)
+    model, hist = _step1(1, val_loader=val, kl_warmup_epochs=5, class_counts={0: 2})
+    model.eval()
+    with torch.no_grad():
+        out = model(val[0]["S1"]["windows"], "S1", return_all=True)
+    expected = torch.nn.functional.cross_entropy(
+        out["region_logits"], val[0]["S1"]["regions"]
+    ).item()
+    assert hist["val_region"][0] == pytest.approx(expected, rel=1e-5)
+
+
+def test_step2_validation_ignores_a_batch_of_classes_absent_from_training():
+    """Step 2's val_region (its early-stopping loss) is likewise the class-0 windows'
+    cross-entropy, so a late-appearing region cannot turn early stopping off."""
+    val = _unseen_class_val(windows=False)
+    torch.manual_seed(0)
+    dec, hist = train_step2(
+        _decoder(), [_step2_batch()], _DEVICE, lambda s: None, _NC, num_epochs=1, lr=1e-3,
+        val_loader=val, class_counts={0: 2},
+    )  # fmt: skip
+    dec.eval()
+    with torch.no_grad():
+        logits = dec(val[0][0])[2]
+    expected = torch.nn.functional.cross_entropy(logits, val[0][1]).item()
+    assert hist["val_region"][0] == pytest.approx(expected, rel=1e-5)
+    assert hist["best_epoch"] == 1

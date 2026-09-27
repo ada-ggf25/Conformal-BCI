@@ -19,6 +19,33 @@ from .config import (
 from .losses import compute_contrastive_loss, poisson_nll
 
 
+def _weighted_ce_sums(
+    logits: torch.Tensor, targets: torch.Tensor, weights: torch.Tensor
+) -> tuple[float, float]:
+    """Numerator and denominator of a class-weighted cross-entropy mean over one batch.
+
+    Summed over a whole validation block, their ratio is the weighted mean over every
+    window. A per-batch mean is 0/0 = NaN for a batch whose windows all belong to
+    zero-weight classes (regions absent from the training block), and one such batch would
+    make the averaged validation loss NaN.
+
+    Args:
+        logits:  (B, K) class logits.
+        targets: (B,) class indices.
+        weights: (K,) class weights.
+
+    Returns:
+        ``(sum_i w_{y_i} * nll_i, sum_i w_{y_i})``.
+    """
+    num = nn.functional.cross_entropy(logits, targets, weight=weights, reduction="sum")
+    return float(num.item()), float(weights[targets].sum().item())
+
+
+def _weighted_mean(num: float, den: float) -> float:
+    """``num / den``, or NaN when every validation window has zero weight."""
+    return num / den if den > 0 else float("nan")
+
+
 def _es_defaults(patience, min_delta):
     """Early-stopping patience and minimum delta, each falling back to its config default.
 
@@ -267,7 +294,7 @@ def train_step1[M: nn.Module](
         val_recon = val_region = val_kl = None
         if val_loader is not None and len(val_loader) > 0:
             model.eval()
-            vtot = vrecon = vregion = vkl = 0.0
+            vrecon = vkl = vr_num = vr_den = 0.0
             vnb = 0
             with torch.no_grad():
                 for batch_dict in val_loader:
@@ -290,19 +317,19 @@ def train_step1[M: nn.Module](
                     recon_v = torch.stack(vsession_recons).mean()
                     # Validation KL is the plain mean, without the free-bits floor.
                     kl_v = -0.5 * torch.mean(1 + lv_v - mu_v.pow(2) - lv_v.exp())
-                    region_v = criterion(lo_v, re_v)
-                    vtot += (
-                        RECON_WEIGHT * recon_v + region_weight * region_v + kl_w * kl_v
-                    ).item()
+                    num, den = _weighted_ce_sums(lo_v, re_v, class_weights)
+                    vr_num += num
+                    vr_den += den
                     vrecon += recon_v.item()
-                    vregion += region_v.item()
                     vkl += kl_v.item()
                     vnb += 1
             vnb = max(vnb, 1)
-            val_loss = vtot / vnb
             val_recon = vrecon / vnb
-            val_region = vregion / vnb
+            val_region = _weighted_mean(vr_num, vr_den)
             val_kl = vkl / vnb
+            val_loss = (
+                RECON_WEIGHT * val_recon + region_weight * val_region + kl_w * val_kl
+            )
         hist.setdefault("val_loss", []).append(val_loss)
         hist.setdefault("val_recon", []).append(val_recon)
         hist.setdefault("val_region", []).append(val_region)
@@ -392,6 +419,8 @@ def train_step2[M: nn.Module](
         epoch, loss, region, contrastive, acc, val_loss, val_region, val_contrastive.
         The ``val_*`` entries are None when there is no validation loader. If early
         stopping selected an epoch, the returned decoder holds that epoch's weights.
+        Also ``best_epoch``: the 1-based epoch whose weights were restored, or None when
+        none were.
     """
     optimizer = torch.optim.Adam(alignment_decoder.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
@@ -407,6 +436,7 @@ def train_step2[M: nn.Module](
     hist: dict = {}
     best_val = float("inf")
     best_state: dict | None = None
+    best_epoch: int | None = None
     stall = 0
 
     for epoch in range(num_epochs):
@@ -453,27 +483,27 @@ def train_step2[M: nn.Module](
         val_loss = val_region = val_contrastive = None
         if val_loader is not None and len(val_loader) > 0:
             alignment_decoder.eval()
-            vtot = vr = vc = 0.0
+            vr_num = vr_den = vc = 0.0
             vnb = 0
             with torch.no_grad():
                 for sequences, regions, session_ids in val_loader:
                     sequences = sequences.to(device)
                     regions = regions.to(device)
                     _, proj, logits = alignment_decoder(sequences)
-                    rl = criterion(logits, regions)
+                    num, den = _weighted_ce_sums(logits, regions, class_weights)
+                    vr_num += num
+                    vr_den += den
                     cl = compute_contrastive_loss(
                         proj,
                         regions.cpu().numpy().tolist(),
                         session_ids.numpy().tolist(),
                         temperature=TEMPERATURE,
                     )
-                    vtot += (region_weight * rl + contrastive_weight * cl).item()
-                    vr += rl.item()
                     vc += cl.item()
                     vnb += 1
-            val_loss = vtot / max(vnb, 1)
-            val_region = vr / max(vnb, 1)
+            val_region = _weighted_mean(vr_num, vr_den)
             val_contrastive = vc / max(vnb, 1)
+            val_loss = region_weight * val_region + contrastive_weight * val_contrastive
         hist.setdefault("val_loss", []).append(val_loss)
         hist.setdefault("val_region", []).append(val_region)
         hist.setdefault("val_contrastive", []).append(val_contrastive)
@@ -497,6 +527,7 @@ def train_step2[M: nn.Module](
             if metric < best_val - es_delta:
                 best_val = metric
                 best_state = copy.deepcopy(alignment_decoder.state_dict())
+                best_epoch = epoch + 1
                 stall = 0
             else:
                 stall += 1
@@ -508,5 +539,6 @@ def train_step2[M: nn.Module](
     if best_state is not None:
         alignment_decoder.load_state_dict(best_state)
         log_fn(f"      [Step2] restored best-val weights (val_metric={best_val:.4f})")
+    hist["best_epoch"] = best_epoch
 
     return alignment_decoder, hist
