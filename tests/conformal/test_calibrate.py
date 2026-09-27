@@ -1,8 +1,12 @@
-"""Tests for src/conformal/calibrate.py."""
+"""Tests for src/conformal/calibrate.py.
+
+Accepted gaps: none.
+"""
 
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from src.conformal.calibrate import compute_quantile
 
@@ -30,3 +34,23 @@ class TestComputeQuantile:
             assert empirical >= 1 - alpha, (
                 f"alpha={alpha}: coverage {empirical:.4f} < {1 - alpha:.4f}"
             )
+
+    @pytest.mark.parametrize(
+        ("alpha", "expected"),
+        [(0.5, 3.0), (0.2, 5.0), (0.0, np.inf)],
+    )
+    def test_threshold_is_the_exact_order_statistic(self, alpha, expected):
+        """Unsorted scores 1..5 (n = 5): alpha 0.5 -> ceil(3) = 3rd smallest; alpha 0.2 ->
+        ceil(4.8) = 5th; alpha 0 -> the 6th, which does not exist."""
+        assert compute_quantile(np.array([5.0, 1.0, 4.0, 2.0, 3.0]), alpha) == expected
+
+    def test_marginal_coverage_on_fresh_exchangeable_data(self):
+        """For n calibration scores and one exchangeable test score, P(test <= q_hat) is exactly
+        ceil((n+1)(1-alpha)) / (n+1): 18/20 = 0.9 for n = 19, alpha = 0.1."""
+        rng = np.random.default_rng(0)
+        trials = 4000
+        hits = 0
+        for _ in range(trials):
+            s = rng.exponential(size=20)
+            hits += s[-1] <= compute_quantile(s[:-1], 0.1)
+        assert abs(hits / trials - 0.9) < 0.015  # about 3 binomial standard errors
