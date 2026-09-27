@@ -30,3 +30,4 @@ paper/build/
 
 # Working plan for the session-chain pivot (local only, never committed)
 PIVOT_PLAN.md
+.coverage

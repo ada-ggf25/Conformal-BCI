@@ -3,7 +3,7 @@ PAPER := paper
 .PHONY: setup setup-all setup-python setup-docs setup-latex \
 	paper-test \
 	data-test utils-test models-test conformal-test chain-test \
-	src-test docs-test \
+	src-test src-coverage docs-test \
 	mkdocs-test mkdocs-build mkdocs-serve \
 	db-test python-lint python-typecheck ci-test \
 	maze maze-quick cross-maze
@@ -65,6 +65,12 @@ mkdocs-serve:
 src-test:
 	uv run pytest tests/data/ tests/utils/ tests/models/ \
 	  tests/conformal/ tests/chain/ tests/db/ -v -m "not integration"
+
+# Source unit tests with line and branch coverage of src/.
+src-coverage:
+	uv run pytest tests/data/ tests/utils/ tests/models/ \
+	  tests/conformal/ tests/chain/ tests/db/ -m "not integration" \
+	  --cov=src --cov-branch --cov-report=term-missing
 
 data-test:
 	uv run pytest tests/data/ -v
