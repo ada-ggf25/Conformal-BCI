@@ -128,14 +128,18 @@ def build_chain_bundle(
     alpha: float,
     rule: str,
     config: dict,
+    training: list[dict] | None = None,
 ) -> tuple[dict, dict[str, np.ndarray]]:
     """``metrics.json`` and ``arrays.npz`` contents for one chain run.
 
     ``metrics.json`` keeps the keys the cross-maze readers read (``decoder``, and
     ``conformal`` ``arms`` / ``test_coverage`` / ``per_region_coverage`` / ``retrain_sweep``),
     all for the deployed method, pooled over the test windows of every tested session;
-    ``conformal.methods`` adds every method per session group. ``arrays.npz`` has one row per
-    tested window, in chain order.
+    ``conformal.methods`` adds every method per session group; ``training`` holds every session's
+    training curves. ``arrays.npz`` has one row per tested window, in chain order, and, when the
+    rows carry them, the test windows' probabilities and sigma plus a calibration table
+    (``cal_*``, one row per calibration window of every tested session, own block and the
+    re-scored past blocks), enough to recompute any calibration rule offline.
 
     Args:
         rows:         ``run_chain`` output, one row per tested session.
@@ -148,11 +152,15 @@ def build_chain_bundle(
         alpha:        miscoverage level; the coverage target is ``1 - alpha``.
         rule:         the deployed pool rule (``"B3"``); ``chain_<rule>`` is the headline method.
         config:       the run's configuration, recorded as given.
+        training:     ``run_chain``'s training log, recorded as given.
 
     Returns:
         ``(metrics, arrays)``: the ``metrics.json`` dict (not yet passed through
         ``jsonify``) and the ``arrays.npz`` arrays. Per-window arrays are named
-        ``win_<field>`` or ``win_<field>_<method>``.
+        ``win_<field>`` or ``win_<field>_<method>``; the calibration table's arrays are
+        ``cal_session_idx`` (the tested session, as ``win_session_idx``), ``cal_offset``
+        (0 = its own block, k = k sessions back), ``cal_region``, ``cal_score`` and
+        ``cal_sigma``.
     """
     target = 1.0 - alpha
     main = f"chain_{rule}"
@@ -270,6 +278,24 @@ def build_chain_bundle(
     u = np.concatenate([r["signals"] for r in rows])
     for j, name in enumerate(SIGNALS):
         arrays[f"win_{name}"] = u[:, j]
+    if all("probs" in r for r in rows):
+        arrays["win_probs"] = np.concatenate([r["probs"] for r in rows])
+        arrays["win_sigma"] = np.concatenate([r["sigma"] for r in rows])
+    if all("calibration" in r for r in rows):
+        blocks = [(i, c) for i, r in enumerate(rows) for c in r["calibration"]]
+        arrays["cal_session_idx"] = np.concatenate(
+            [np.full(len(c["labels"]), i) for i, c in blocks]
+        )
+        arrays["cal_offset"] = np.concatenate(
+            [np.full(len(c["labels"]), c["offset"]) for _, c in blocks]
+        )
+        arrays["cal_region"] = np.concatenate([c["labels"] for _, c in blocks]).astype(
+            int
+        )
+        arrays["cal_score"] = np.concatenate([c["scores"] for _, c in blocks])
+        arrays["cal_sigma"] = np.concatenate([c["sigma"] for _, c in blocks])
+    if training is not None:
+        metrics["training"] = training
     return metrics, arrays
 
 

@@ -295,3 +295,50 @@ def test_sigma_nets_payload_lists_each_sessions_net_and_standardization():
         "signal_std": [2.0, 3.0],
     }  # fmt: skip
     assert p["sessions"][1]["signal_std"] == [1.0, 1.0]
+
+
+def test_bundle_keeps_probabilities_and_the_calibration_table():
+    """Two sessions: the second calibrates on its own 2 windows and 1 borrowed; the table
+    lists every calibration window with its tested session, offset, region, score and sigma,
+    and the test windows keep their probabilities and sigma."""
+    rows = [
+        _row("A_2", True, [0], [1], [1 / 3], [0], ["own"]),
+        _row("B_3", False, [1, 2], [1, 0], [1 / 3, 2 / 3], [0, 1], ["own", "own"]),
+    ]
+    rows[0] |= {
+        "probs": np.array([[0.7, 0.2, 0.1]]),
+        "sigma": np.array([2.0]),
+        "calibration": [{"offset": 0, "session": "A_2", "labels": np.array([2]),
+                         "scores": np.array([0.4]), "sigma": np.array([1.5])}],
+    }  # fmt: skip
+    rows[1] |= {
+        "probs": np.array([[0.1, 0.8, 0.1], [0.3, 0.3, 0.4]]),
+        "sigma": np.array([1.0, 0.5]),
+        "calibration": [
+            {"offset": 0, "session": "B_3", "labels": np.array([0, 1]),
+             "scores": np.array([0.1, 0.2]), "sigma": np.array([1.0, 1.0])},
+            {"offset": 1, "session": "A_2", "labels": np.array([2]),
+             "scores": np.array([0.9]), "sigma": np.array([3.0])},
+        ],
+    }  # fmt: skip
+    log = [{"session": "W_1", "warmup": True}]
+    data = {
+        "W_1": {"regions": np.array([0, 1]), "train_idx": np.array([0]),
+                "val_idx": np.array([1]), "test_idx": np.array([], int)},
+        "A_2": {"regions": np.array([2, 0]), "train_idx": np.array([0]),
+                "val_idx": np.array([], int), "test_idx": np.array([1])},
+        "B_3": {"regions": np.array([1, 2]), "train_idx": np.array([], int),
+                "val_idx": np.array([], int), "test_idx": np.array([0, 1])},
+    }  # fmt: skip
+    metrics, arrays = build_chain_bundle(
+        rows, chain=["W_1", "A_2", "B_3"], n_warmup=1, session_data=data, n_classes=3,
+        paradigm="Y_Maze", seed=7, alpha=0.1, rule="B3", config={}, training=log,
+    )  # fmt: skip
+    assert arrays["win_probs"].shape == (3, 3)
+    np.testing.assert_array_equal(arrays["win_sigma"], [2.0, 1.0, 0.5])
+    np.testing.assert_array_equal(arrays["cal_session_idx"], [0, 1, 1, 1])
+    np.testing.assert_array_equal(arrays["cal_offset"], [0, 0, 0, 1])
+    np.testing.assert_array_equal(arrays["cal_region"], [2, 0, 1, 2])
+    np.testing.assert_array_equal(arrays["cal_score"], [0.4, 0.1, 0.2, 0.9])
+    np.testing.assert_array_equal(arrays["cal_sigma"], [1.5, 1.0, 1.0, 3.0])
+    assert metrics["training"] == log
