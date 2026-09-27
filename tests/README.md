@@ -6,6 +6,7 @@ The complete test suite: `src/` unit tests, documentation checks, and the LaTeX 
 
 ```text
 tests/
+├── analyses/            # Tests for analyses/run_mazes.py (the seed x maze sweep)
 ├── chain/               # Tests for src/chain/
 ├── conformal/           # Tests for src/conformal/
 ├── models/              # Tests for src/models/

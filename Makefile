@@ -64,12 +64,12 @@ mkdocs-serve:
 # Source unit tests.
 src-test:
 	uv run pytest tests/data/ tests/utils/ tests/models/ \
-	  tests/conformal/ tests/chain/ tests/db/ -v -m "not integration"
+	  tests/conformal/ tests/chain/ tests/db/ tests/analyses/ -v -m "not integration"
 
 # Source unit tests with line and branch coverage of src/.
 src-coverage:
 	uv run pytest tests/data/ tests/utils/ tests/models/ \
-	  tests/conformal/ tests/chain/ tests/db/ -m "not integration" \
+	  tests/conformal/ tests/chain/ tests/db/ tests/analyses/ -m "not integration" \
 	  --cov=src --cov-branch --cov-report=term-missing
 
 data-test:
@@ -96,7 +96,7 @@ python-lint:
 	uv run ruff format --check src/ tests/ analyses/
 
 python-typecheck:
-	uv run mypy src/ tests/data tests/utils tests/models tests/conformal tests/chain tests/db tests/docs analyses/
+	uv run mypy src/ tests/data tests/utils tests/models tests/conformal tests/chain tests/db tests/analyses tests/docs analyses/
 
 # Experimental analysis run.
 # These need .env + a live MongoDB connection and train models:
