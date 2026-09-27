@@ -1,9 +1,15 @@
-"""Tests for src/data/regions.py."""
+"""Tests for src/data/regions.py.
 
+Accepted gaps: none.
+"""
+
+from src.data.config import LINEAR_N_REGIONS
 from src.data.regions import (
     classify_point_more_water,
     classify_point_nested,
     classify_point_ymaze,
+    get_num_classes,
+    uses_water,
 )
 
 
@@ -60,3 +66,39 @@ def test_more_water_without_a_water_position_is_unlabeled():
     """A trial with no usable water position yields -1, never a real region."""
     for water in (float("nan"), 0.0, -100.0):
         assert classify_point_more_water(1000.0, water) == -1
+
+
+def test_class_count_covers_every_label_each_classifier_can_emit():
+    """The decoder's output width comes from get_num_classes, the labels from the classifiers:
+    every label a paradigm's classifier emits must be a valid class, and every class reachable.
+    """
+    grid = [(x, y) for x in range(-12000, 12001, 250) for y in range(-500, 12001, 250)]
+    emitted = {
+        "Y_Maze": {classify_point_ymaze(x, y) for x, y in grid},
+        "Nested_Maze": {classify_point_nested(x, y) for x, y in grid},
+        "More_Water": {
+            classify_point_more_water(y, 2500.0) for y in range(-100, 2700, 10)
+        },
+    }
+    for paradigm, labels in emitted.items():
+        assert labels == set(range(get_num_classes(paradigm))), paradigm
+
+
+def test_linear_region_count_is_the_configured_one():
+    """The Linear maze's class count is the configured number of equal segments."""
+    assert get_num_classes("More_Water") == LINEAR_N_REGIONS
+    top = classify_point_more_water(10_000.0, 2500.0)
+    assert top == LINEAR_N_REGIONS - 1
+
+
+def test_only_the_linear_maze_uses_the_water_position():
+    """Water-relative regions belong to the Linear maze; the Y and Nested mazes have fixed
+    geometry, including the merged Nested_Maze+2 block."""
+    for paradigm, expected in [
+        ("More_Water", True),
+        ("Y_Maze", False),
+        ("Nested_Maze", False),
+        ("Nested_Maze+2", False),
+        ("Nested_All", False),
+    ]:
+        assert uses_water(paradigm) is expected, paradigm
