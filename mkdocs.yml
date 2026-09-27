@@ -44,7 +44,11 @@ markdown_extensions:
       anchor_linenums: true
       line_spans: __span
       pygments_lang_class: true
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.arithmatex:
       generic: true
 
@@ -60,6 +64,9 @@ plugins:
           paths: [.]
           options:
             docstring_style: google
+            docstring_options:
+              # A multi-line Returns section is one description, not one item per line.
+              returns_multiple_items: false
             show_source: true
             show_root_heading: true
             show_root_full_path: false
@@ -73,6 +80,7 @@ plugins:
 
 nav:
   - Home: index.md
+  - The Method: pipeline.md
   - API Reference:
     - Overview: api/index.md
     - Models: api/models.md
