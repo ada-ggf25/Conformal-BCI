@@ -13,12 +13,13 @@ def poisson_nll(
     NLL(rate, target) = rate - target * log(rate)
 
     Args:
-        rates:   predicted Poisson rates, shape (batch, T, n_shared); must be > 0
+        rates:   predicted Poisson rates, shape (batch, T, n_neurons); must be > 0
         targets: observed spike counts, same shape
         eps:     floor added to rates to avoid log(0)
 
     Returns:
-        scalar mean NLL
+        scalar mean NLL over every element. The ``log(target!)`` term is dropped: it does
+        not depend on the rates.
     """
     rates = rates + eps
     return (rates - targets * torch.log(rates)).mean()
@@ -32,9 +33,13 @@ def compute_contrastive_loss(
 ) -> torch.Tensor:
     """NT-Xent contrastive loss for Step 2 alignment.
 
-    Positive pairs are windows from the same region but different sessions.
-    Cross-session same-region pairs receive double weight (1 + 1 = 2) relative to
-    same-session same-region pairs (weight = 1). Self-pairs are excluded.
+    Positive pairs are windows from the same region. Cross-session same-region pairs
+    receive double weight (1 + 1 = 2) relative to same-session same-region pairs
+    (weight = 1), which pushes the alignment to match regions across sessions. Self-pairs
+    are excluded. Each anchor's positive weights are normalized to sum to 1, and its loss
+    is ``-log`` of the weighted positive similarity over the sum over every other sample.
+    An anchor with no positive in the batch contributes ``-log(1e-8)``, a constant with
+    no gradient.
 
     Args:
         proj:          L2-normalized projections, shape (batch, proj_dim)
@@ -49,6 +54,8 @@ def compute_contrastive_loss(
     device = proj.device
 
     sim_matrix = torch.mm(proj, proj.t()) / temperature
+    # Subtract each row's max before exp for numerical stability; the loss is a ratio of
+    # exponentials within a row, so the shift cancels.
     sim_matrix = sim_matrix - sim_matrix.max(dim=1, keepdim=True).values.detach()
 
     region_labels_t = torch.tensor(region_labels, device=device)
