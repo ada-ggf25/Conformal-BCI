@@ -61,7 +61,14 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class TrainBudget:
-    """Epoch caps and early-stopping patience for the three trained stages."""
+    """Epoch caps and early-stopping patience for the three trained stages.
+
+    Attributes:
+        epochs:       epoch cap for Step 1 and for Step 2.
+        patience:     early-stopping patience for Step 1 and for Step 2.
+        mlp_epochs:   epoch cap for the conformal scale sigma.
+        mlp_patience: early-stopping patience for sigma.
+    """
 
     epochs: int = 200
     patience: int = 20
@@ -75,6 +82,20 @@ class ChainModel:
     Built for the chain's first session; every later session is added when it arrives
     (``SharedTemporalClassifier.add_session``), so nothing about it depends on sessions that come
     after. Sigma and its signal standardization are replaced by each ``fit``.
+
+    Args:
+        first_session: the chain's first session.
+        config:        its neuron config from ``build_hybrid_neuron_mapping``.
+        n_classes:     number of regions.
+        device:        device the networks live on.
+
+    Attributes:
+        step1:    the BC-VAE encoder (``SharedTemporalClassifier``).
+        dec:      the alignment decoder.
+        sessions: sessions whose input layers exist, in arrival order.
+        sigma:    the deployed conformal scale, or None before the first ``fit`` (and in a
+                  baseline model, which never trains one).
+        stats:    the signal standardization sigma was trained with.
     """
 
     def __init__(
@@ -121,15 +142,28 @@ class ChainModel:
 
         Early stopping uses the session's calibration block (``val_idx``). The KL warm-up runs
         only when training from scratch. Sigma is fine-tuned from the previous session's sigma.
+        The session's Step 1 latents are stored in ``d["step1_all_latents"]``.
+
+        Args:
+            s:            the session's name.
+            d:            its prepared data dict.
+            from_scratch: True for the chain's first session (KL warm-up on, sigma from 1).
+            budget:       epoch caps and patience.
+            alpha:        miscoverage level sigma is trained for.
+            seed:         seed for sigma's training.
+            train_sigma:  False skips sigma (the standard split-conformal baseline); the
+                          signal stats are still fitted.
 
         Returns:
             The training-block and calibration-block signal inputs sigma was fit on (for the
             coverage-sweep branches): ``{"tr", "va"}``, each ``{"u", "probs", "labels"}``.
         """
         batch = min(BATCH_SIZE, 256)
+        # Train on this session alone, weighting classes by its own training block.
         one = {s: d}
         counts = compute_class_counts(one, [s])
         silent: Callable[[str], None] = lambda _m: None  # noqa: E731
+        # A log interval longer than the run: no progress lines.
         quiet = budget.epochs + 1
         self.step1, _ = train_step1(
             model=self.step1,
@@ -210,7 +244,18 @@ class ChainModel:
         budget: TrainBudget,
         seed: int,
     ) -> ScaleNet:
-        """Fit sigma on the training-block inputs, early-stopped on the calibration block."""
+        """Fit sigma on the training-block inputs, early-stopped on the calibration block.
+
+        Args:
+            inputs: ``{"tr", "va"}`` signal inputs from ``fit``.
+            alpha:  miscoverage level to train for.
+            init:   sigma to fine-tune from, or None to start at sigma = 1.
+            budget: epoch cap and patience for sigma.
+            seed:   training seed.
+
+        Returns:
+            The trained scale network.
+        """
         assert self.stats is not None
         tr, va = inputs["tr"], inputs["va"]
         net, _ = train_scale(
@@ -230,6 +275,7 @@ class ChainModel:
             early_stop_patience=budget.mlp_patience,
             n_classes=self.n_classes,
             split=MLP_CAL_SPLIT,
+            # One session: a single group, so the chronological split halves it in time.
             groups=np.zeros(len(tr["labels"]), int),
             val_groups=np.zeros(len(va["labels"]), int),
             init_net=init,
@@ -241,7 +287,15 @@ class ChainModel:
     # ------------------------------------------------------------------ inference
 
     def forward(self, s: str, d: dict) -> dict[str, np.ndarray]:
-        """Latents, log-variances and softmax probabilities for every window of a session."""
+        """Latents, log-variances and softmax probabilities for every window of a session.
+
+        Args:
+            s: the session's name.
+            d: its prepared data dict.
+
+        Returns:
+            ``{"latents", "logvar", "probs"}``, one row per window of the session.
+        """
         self.step1.eval()
         self.dec.eval()
         lat = extract_latents_hybrid(self.step1, d["windows"], s, self.device)
@@ -255,7 +309,17 @@ class ChainModel:
     def signals(
         self, s: str, d: dict, fw: dict[str, np.ndarray], idx: np.ndarray
     ) -> np.ndarray:
-        """The four uncertainty signals (``SIGNALS`` order) for the windows ``idx``."""
+        """The four uncertainty signals (``SIGNALS`` order) for the windows ``idx``.
+
+        Args:
+            s:   the session's name.
+            d:   its prepared data dict.
+            fw:  ``forward`` output for the session.
+            idx: indices of the windows.
+
+        Returns:
+            (len(idx), 4) raw signals.
+        """
         return window_signals(
             self.step1,
             self.dec,
@@ -270,7 +334,16 @@ class ChainModel:
         )
 
     def block(self, s: str, d: dict, idx: np.ndarray) -> dict[str, np.ndarray]:
-        """Probabilities, raw signals and labels of the windows ``idx``, under the current model."""
+        """Probabilities, raw signals and labels of the windows ``idx``, under the current model.
+
+        Args:
+            s:   the session's name.
+            d:   its prepared data dict.
+            idx: indices of the windows.
+
+        Returns:
+            ``{"probs", "u", "labels"}``, with ``u`` the raw signals.
+        """
         fw = self.forward(s, d)
         return {
             "probs": fw["probs"][idx],
@@ -285,6 +358,13 @@ class ChainModel:
 
         ``sigma`` defaults to the deployed sigma; pass a sweep branch to score with it. With no
         deployed sigma (a baseline model) the scale is 1, i.e. standard split conformal.
+
+        Args:
+            blk:   a ``block`` output.
+            sigma: the scale to score with, or None for the deployed one.
+
+        Returns:
+            ``{"probs", "sigma", "labels", "scores"}``.
         """
         net = sigma if sigma is not None else self.sigma
         if net is None:
@@ -305,7 +385,13 @@ class ChainModel:
     # ------------------------------------------------------------------ checkpoints
 
     def state(self) -> dict[str, Any]:
-        """Everything needed to rebuild the model (sessions, weights, sigma, stats)."""
+        """Everything needed to rebuild the model (sessions, weights, sigma, stats).
+
+        Returns:
+            ``{"sessions", "step1", "dec", "sigma", "stats"}``: state dicts for the three
+            networks (``sigma`` None if untrained) and the signal stats as
+            ``(mean, std)`` lists.
+        """
         return {
             "sessions": list(self.sessions),
             "step1": self.step1.state_dict(),
@@ -317,7 +403,12 @@ class ChainModel:
         }
 
     def load(self, state: dict[str, Any], configs: dict) -> None:
-        """Restore a ``state()``: re-add its sessions, then load the weights."""
+        """Restore a ``state()``: re-add its sessions, then load the weights.
+
+        Args:
+            state:   a ``state()`` output.
+            configs: neuron configs for every session in ``state["sessions"]``.
+        """
         for s in state["sessions"]:
             self.add_session(s, configs[s])
         self.step1.load_state_dict(state["step1"])
