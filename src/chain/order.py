@@ -8,7 +8,14 @@ from ..utils.pipeline_prep import normalize_session_windows
 
 
 def chain_order(sessions: list[str]) -> list[str]:
-    """Calendar order across mice: by recording date (``M<id>_<YYMMDD>``), ties by mouse."""
+    """Calendar order across mice: by recording date (``M<id>_<YYMMDD>``), ties by mouse.
+
+    Args:
+        sessions: session names of the form ``M<id>_<YYMMDD>``.
+
+    Returns:
+        The names sorted by date, then by the mouse part as a string.
+    """
     return sorted(sessions, key=lambda s: (s.split("_")[1], s.split("_")[0]))
 
 
@@ -17,6 +24,11 @@ def resplit_warmup(d: dict, train_frac: float = 0.7) -> None:
 
     Warm-up sessions are never tested. Their task windows (every index of the original split)
     are re-cut chronologically: the first ``train_frac`` train, the rest calibration.
+
+    Args:
+        d:          the session's data dict; its ``train_idx``, ``val_idx`` and ``test_idx``
+                    are replaced in place (``test_idx`` becomes empty).
+        train_frac: share of the task windows that goes to training.
     """
     task = np.sort(np.concatenate([d["train_idx"], d["val_idx"], d["test_idx"]]))
     cut = round(train_frac * len(task))
@@ -24,7 +36,15 @@ def resplit_warmup(d: dict, train_frac: float = 0.7) -> None:
 
 
 def first_session_flags(chain: list[str], mouse: dict[str, str]) -> list[bool]:
-    """Per chain position: is this the first session of its mouse in the chain?"""
+    """Per chain position: is this the first session of its mouse in the chain?
+
+    Args:
+        chain: session names in chain order.
+        mouse: session name to mouse id.
+
+    Returns:
+        One flag per chain position.
+    """
     seen: set[str] = set()
     flags = []
     for s in chain:
@@ -43,6 +63,12 @@ def prepare_chain(
 
     The warm-up re-split must come before normalization, because each session's neurons are
     z-scored with its own training-block statistics.
+
+    Args:
+        session_data:      assembled sessions keyed by name; modified in place.
+        sessions:          the sessions to chain, in any order.
+        n_warmup:          how many leading sessions of the chain are warm-up.
+        warmup_train_frac: a warm-up session's train share (``resplit_warmup``).
 
     Returns:
         The chain: session names in calendar order.
