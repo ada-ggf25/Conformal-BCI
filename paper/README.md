@@ -28,4 +28,4 @@ make -C paper clean    # remove build/
 
 ## Checks
 
-`make paper-test` from the repository root runs the LaTeX compile, word and float limits, and American English spelling checks. The same suite runs in CI as the `paper-checks` workflow on pull requests to `main`. The word and float limits are still the thesis limits (5,000 words, 10 figures and tables). NeurIPS instead limits the main text to nine pages; references, acknowledgments, the checklist, and appendices do not count.
+`make paper-test` from the repository root runs the LaTeX compile, word and float limits, American English spelling of `main.tex` and every file it inputs (the checklist), and bibliography and figure hygiene: every `references.bib` entry is cited and defined once, and every image in `figures/` is used by the paper and committed. The same suite runs in CI as the `paper-checks` workflow on pull requests to `main`. The word and float limits are still the thesis limits (5,000 words, 10 figures and tables). NeurIPS instead limits the main text to nine pages; references, acknowledgments, the checklist, and appendices do not count.
