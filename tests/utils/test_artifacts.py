@@ -25,6 +25,8 @@ from src.utils.artifacts import (
 
 
 class TestParadigmSlug:
+    """Bundle directory names: safe on disk and never empty."""
+
     @pytest.mark.parametrize(
         ("paradigm", "slug"),
         [
@@ -140,6 +142,8 @@ def _bundle(rows, chain=("W_1", "A_2", "B_3"), n_classes=3):
 
 
 class TestBuildChainBundle:
+    """Every bundle number, worked by hand from a two-session chain."""
+
     ROWS = [
         _row("A_2", True, [0, 0, 1], [1, 1, 0], [1 / 3, 2 / 3, 1 / 3], [0, 1, 1],
              ["own", "own", "global"], sweep_cov=[0, 0, 0]),

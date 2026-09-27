@@ -1,4 +1,9 @@
-"""Filesystem layout and write side of the per-maze analysis bundles (one per seed)."""
+"""Filesystem layout and write side of the per-maze analysis bundles (one per seed).
+
+A bundle is ``metrics.json`` (summary numbers), ``arrays.npz`` (one row per tested window)
+and ``sigma_nets.pt`` (each tested session's learned scale). ``bundle_readers`` is the read
+side.
+"""
 
 from __future__ import annotations
 
@@ -15,6 +20,12 @@ def paradigm_slug(paradigm: str) -> str:
 
     Runs of non-alphanumeric characters collapse to a single underscore, so
     ``'Nested_Maze+2'`` becomes ``'Nested_Maze_2'``.
+
+    Args:
+        paradigm: paradigm string or cohort label.
+
+    Returns:
+        The slug, with leading and trailing underscores stripped.
 
     Raises:
         ValueError: if paradigm is empty or has no alphanumeric characters.
@@ -33,6 +44,13 @@ def jsonify(obj: Any) -> Any:
 
     Numpy floats/ints/bools become Python scalars, arrays become nested lists, and
     non-finite floats (``inf`` / ``nan``) become ``None`` so ``json.dump`` succeeds.
+    Dict keys become strings and tuples become lists.
+
+    Args:
+        obj: any nesting of dicts, lists, tuples, numpy values and Python scalars.
+
+    Returns:
+        The same structure built from JSON-serializable types only.
     """
     if isinstance(obj, dict):
         return {str(k): jsonify(v) for k, v in obj.items()}
@@ -62,6 +80,7 @@ MIN_REGION_WINDOWS = 5
 
 
 def _concat(rows: list[dict], method: str, key: str) -> np.ndarray:
+    """One method's per-window ``key`` array, concatenated over rows in order."""
     return np.concatenate([r["methods"][method][key] for r in rows])
 
 
@@ -69,6 +88,16 @@ def method_summary(rows: list[dict], method: str, target: float) -> dict[str, An
     """One method's results over a group of tested sessions, pooled over test windows.
 
     ``mean_abs_gap`` and ``sessions_below`` are per-session diagnostics against ``target``.
+
+    Args:
+        rows:   ``run_chain`` rows of the group's sessions.
+        method: a key of each row's ``methods``.
+        target: the coverage target ``1 - alpha``.
+
+    Returns:
+        ``n_sessions``, ``n_windows``, pooled ``coverage``, ``size_over_k`` and
+        ``accuracy``, the per-session ``mean_abs_gap`` and ``sessions_below``, and the
+        share of windows whose threshold was ``own``, ``borrowed`` or ``global``.
     """
     covered = _concat(rows, method, "covered")
     per_session = np.array([r["methods"][method]["covered"].mean() for r in rows])
@@ -119,6 +148,11 @@ def build_chain_bundle(
         alpha:        miscoverage level; the coverage target is ``1 - alpha``.
         rule:         the deployed pool rule (``"B3"``); ``chain_<rule>`` is the headline method.
         config:       the run's configuration, recorded as given.
+
+    Returns:
+        ``(metrics, arrays)``: the ``metrics.json`` dict (not yet passed through
+        ``jsonify``) and the ``arrays.npz`` arrays. Per-window arrays are named
+        ``win_<field>`` or ``win_<field>_<method>``.
     """
     target = 1.0 - alpha
     main = f"chain_{rule}"
@@ -147,6 +181,7 @@ def build_chain_bundle(
         )
 
     region_n = np.bincount(labels, minlength=n_classes)
+    # Regions with too few test windows are reported as None rather than a noisy mean.
     per_region: dict[str, dict[int, Any]] = {"learned": {}, "n_test": {}, "size": {}}
     for c in range(n_classes):
         m = labels == c
@@ -179,6 +214,7 @@ def build_chain_bundle(
         if grp
     }
 
+    # Region distribution over every task window of every chain session, warm-up included.
     counts = np.zeros(n_classes, dtype=int)
     for s in chain:
         d = session_data[s]
@@ -241,6 +277,15 @@ def sigma_nets_payload(rows: list[dict], hidden: int, depth: int) -> dict[str, A
     """The ``sigma_nets.pt`` contents: each tested session's sigma and its signal standardization.
 
     Session ``i`` here is row ``i`` of ``run_chain`` (``win_session_idx == i`` in ``arrays.npz``).
+
+    Args:
+        rows:   ``run_chain`` rows.
+        hidden: the scale net's hidden width, needed to rebuild it.
+        depth:  the scale net's depth, needed to rebuild it.
+
+    Returns:
+        ``{"signals", "hidden", "depth", "sessions"}``, one ``sessions`` entry per row with
+        its name, state dict, and signal mean and std.
     """
     return {
         "signals": list(SIGNALS),
