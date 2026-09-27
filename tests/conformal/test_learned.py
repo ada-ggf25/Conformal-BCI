@@ -388,3 +388,28 @@ def test_sensitivity_standardizes_with_the_given_statistics():
         signal_sensitivity(net, (raw - mean) / std, np.zeros(3), np.ones(3)),
         rtol=1e-6,
     )
+
+
+def test_chronological_halves_send_a_single_row_group_to_ev():
+    """A group with one row has no past to calibrate on: it is scored, never used for q."""
+    cal, ev = _chronological_halves(torch.tensor([5, 5, 7]), torch.tensor([0, 1, 0]))
+    assert cal.tolist() == [0] and sorted(ev.tolist()) == [1, 2]
+
+
+def test_soft_quantile_passes_gradient_to_the_scale():
+    """The quantile is differentiable in the scores, so the shared scale gets a gradient."""
+    scale = torch.tensor(2.0, requires_grad=True)
+    s = torch.tensor([1.0, 2.0, 3.0]) / scale
+    q = _class_conditional_soft_quantiles(s, torch.zeros(3, dtype=torch.long),
+                                          torch.arange(3), 1, 0.1)  # fmt: skip
+    q.sum().backward()
+    assert scale.grad is not None and scale.grad.item() < 0  # larger scale, smaller q
+
+
+def test_early_stopping_with_no_epochs_keeps_standard_conformal():
+    """With a held-out block but zero epochs there is no checkpoint to restore: sigma = 1."""
+    z, p, y = _signals(64), _probs(64), _labels(64)
+    net, report = train_scale(
+        z, p, y, epochs=0, val_signals_z=z, val_probs=p, val_labels=y
+    )
+    assert np.all(scale_of(net, z) == 1.0) and report.best_epoch is None

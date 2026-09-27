@@ -54,3 +54,8 @@ class TestComputeQuantile:
             s = rng.exponential(size=20)
             hits += s[-1] <= compute_quantile(s[:-1], 0.1)
         assert abs(hits / trials - 0.9) < 0.015  # about 3 binomial standard errors
+
+    def test_a_single_score_suffices_at_a_loose_level(self):
+        """n = 1, alpha = 0.5: ceil(2 * 0.5) = 1 <= 1, so the one score is the threshold."""
+        assert compute_quantile(np.array([0.7]), 0.5) == 0.7
+        assert compute_quantile(np.array([0.7]), 0.4) == np.inf  # ceil(1.2) = 2 > 1

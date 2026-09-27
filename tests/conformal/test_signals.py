@@ -127,9 +127,23 @@ class TestSignalStats:
         np.testing.assert_allclose(stats.std, np.sqrt([8 / 3, 800 / 3]), rtol=1e-6)
 
     def test_a_constant_signal_does_not_divide_by_zero(self):
-        """A signal with no spread standardizes to 0, not NaN or inf."""
+        """A signal with no spread gets a small positive std and standardizes to 0."""
         stats = SignalStats.fit(np.full((4, 1), 7.0))
+        assert stats.std[0] > 0
         assert np.all(standardize_signals(np.full((2, 1), 7.0), stats) == 0.0)
+
+    def test_standardization_divides_by_the_fitted_spread(self):
+        """Fit on (0, 4): mean 2, std 2. A new value 6 is (6 - 2) / 2 = 2 standard deviations."""
+        stats = SignalStats.fit(np.array([[0.0], [4.0]]))
+        assert standardize_signals(np.array([[6.0]]), stats)[0, 0] == pytest.approx(2.0)
+
+    def test_fitted_statistics_cannot_be_reassigned(self):
+        """The statistics are frozen once fitted, so no later block can overwrite them."""
+        import dataclasses
+
+        stats = SignalStats.fit(np.zeros((2, 1)))
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            stats.mean = np.ones(1)  # type: ignore[misc]
 
     def test_fit_needs_a_matrix(self):
         """A 1-D vector is ambiguous (one signal or one window?) and is refused."""

@@ -85,3 +85,23 @@ def test_more_bins_than_windows_drops_the_empty_bins():
     assert out["sigma_points"]["n"].tolist() == [1, 1, 1]
     np.testing.assert_allclose(out["sigma_points"]["value"], [1.0, 2.0, 3.0])
     assert np.isnan(out["corr_error_size"])  # a single size level
+
+
+def test_group_points_skip_empty_groups():
+    """Each non-empty group is one (mean value, error rate, count) point; empty groups vanish."""
+    from src.conformal.error_correlation import _group_points
+
+    values, error = np.array([1.0, 3.0, 10.0]), np.array([0.0, 1.0, 1.0])
+    pts = _group_points(
+        values, error, [np.array([0, 1]), np.array([], int), np.array([2])]
+    )
+    assert pts["value"].tolist() == [2.0, 10.0]
+    assert pts["error_rate"].tolist() == [0.5, 1.0] and pts["n"].tolist() == [2, 1]
+
+
+def test_group_points_with_no_groups_are_empty():
+    """No groups give no points (and so an undefined correlation downstream)."""
+    from src.conformal.error_correlation import _group_points
+
+    pts = _group_points(np.zeros(2), np.zeros(2), [])
+    assert len(pts["value"]) == len(pts["n"]) == 0

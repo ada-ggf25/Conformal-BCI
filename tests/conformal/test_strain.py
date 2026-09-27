@@ -105,3 +105,26 @@ def test_only_the_last_latents_block_of_the_jacobian_is_used():
     j = torch.autograd.functional.jacobian(lambda s: dec.align(s)[0], seqs)
     last = j[:, 0, -1, :]
     assert abs(float(base[0]) - float(torch.linalg.svdvals(last)[0])) < 1e-4
+
+
+def test_top_singular_value_of_a_known_linear_map():
+    """For y = A x the Jacobian is A, whose largest singular value is known: diag(3, 1) -> 3,
+    and a rotation scaled by 2 -> 2, for every row of the batch."""
+    from src.conformal.strain import _top_singular_value
+
+    for a, expected in ((torch.diag(torch.tensor([3.0, 1.0])), 3.0),
+                        (2 * torch.tensor([[0.0, -1.0], [1.0, 0.0]]), 2.0)):  # fmt: skip
+        x = torch.randn(4, 2, requires_grad=True)
+        got = _top_singular_value(x @ a.T, x, _DEVICE)
+        np.testing.assert_allclose(got, np.full(4, expected), rtol=1e-6)
+
+
+def test_top_singular_value_of_a_non_square_map():
+    """A 1 x 3 map y = w . x has one singular value, ||w||: (2, 3, 6) -> 7."""
+    from src.conformal.strain import _top_singular_value
+
+    x = torch.randn(3, 3, requires_grad=True)
+    y = (x @ torch.tensor([2.0, 3.0, 6.0]))[:, None]
+    np.testing.assert_allclose(
+        _top_singular_value(y, x, _DEVICE), np.full(3, 7.0), rtol=1e-6
+    )
