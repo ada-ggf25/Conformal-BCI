@@ -1,4 +1,11 @@
-"""Learned non-linear conformal scale: a small MLP trained by Adam on a conformal loss."""
+"""Learned non-linear conformal scale: a small MLP trained by Adam on a conformal loss.
+
+The scale sigma(x) divides the non-conformity score, ``s = (1 - p_y) / sigma(x)``, so a window
+with a large sigma gets a looser threshold and a larger prediction set. ``train_scale`` fits
+sigma from the four per-window signals by making the prediction-set construction smooth: a
+quantile is taken on half of each batch, set membership on the other half is a sigmoid, and
+the loss trades the mean soft set size against a per-region coverage shortfall.
+"""
 
 from __future__ import annotations
 
@@ -21,6 +28,14 @@ class ScaleNet(nn.Module):
     The output layer is zero-initialized, so at step 0 every window gets σ = 1 and the model
     is exactly standard split-conformal. Training can only depart from that baseline by
     reducing the loss.
+
+    Args:
+        n_signals: number of input signals.
+        hidden:    width of each hidden layer.
+        depth:     number of hidden ReLU layers.
+
+    Raises:
+        ValueError: if ``n_signals`` is less than 1.
     """
 
     def __init__(
@@ -44,21 +59,37 @@ class ScaleNet(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, signals_z: Tensor) -> Tensor:
-        """(n, n_signals) standardized signals -> (n,) strictly positive scale."""
+        """Map standardized signals to a strictly positive scale.
+
+        The pre-activation is clamped to ``[-3, 3]`` before ``exp``, so sigma always lies
+        in ``[e^-3, e^3]``.
+
+        Args:
+            signals_z: (n, n_signals) standardized signals.
+
+        Returns:
+            (n,) scale sigma.
+        """
         f = self.net(signals_z).squeeze(-1)
         return torch.exp(torch.clamp(f, -_CLAMP, _CLAMP))
 
 
 @dataclass
 class TrainReport:
-    """What training did? Enough to tell "it learned nothing" from "it failed to run".
+    """What training did: enough to tell "it learned nothing" from "it failed to run".
 
-    ``val_size`` and ``val_coverage`` are the soft |C| and soft coverage on the fit
-    block's in-batch eval-half, not on the held-out val block. They are the training
-    curve, not a held-out measurement. ``earlystop_loss`` is the held-out one.
-
-    ``scale_std`` is the spread of sigma at the end. ``best_epoch`` is the epoch whose
-    weights were restored, or None when training ran to the end.
+    Attributes:
+        epochs:         epochs that ran (fewer than requested after an early stop).
+        loss:           mean training loss per epoch.
+        val_size:       soft |C| per epoch on the fit block's in-batch eval-half, not on
+                        the held-out val block: the training curve, not a held-out
+                        measurement.
+        val_coverage:   soft coverage per epoch, measured like ``val_size``.
+        scale_std:      the spread of sigma over the fit block at the end.
+        earlystop_loss: the held-out early-stopping loss per epoch, or None when no
+                        held-out block was given.
+        best_epoch:     the 0-based epoch whose weights were restored, or None when
+                        training ran without early stopping.
     """
 
     epochs: int
@@ -84,6 +115,16 @@ def _class_conditional_soft_quantiles(
     to the shared scale. A region absent from the cal-half gets a large sentinel -> its class is
     freely admitted on the ev-half that step (no gradient), the soft analog of the +inf
     calibration fallback.
+
+    Args:
+        s_true:    (n,) scaled true-class scores of the batch.
+        labels:    (n,) true regions of the batch.
+        cal_i:     indices of the cal-half rows.
+        n_classes: number of regions K.
+        alpha:     miscoverage level.
+
+    Returns:
+        (K,) per-region quantiles.
     """
     q = s_true.new_full((n_classes,), 1e6)
     yc = labels[cal_i]
@@ -99,10 +140,19 @@ def _chronological_halves(groups: Tensor, times: Tensor) -> tuple[Tensor, Tensor
 
     Rows are ordered by ``times`` inside each group. The first ``m // 2`` of a group's ``m`` rows
     go to cal, the rest to ev, so a group with a single row contributes to ev only.
+
+    Args:
+        groups: (n,) group id per row.
+        times:  (n,) time order per row.
+
+    Returns:
+        ``(cal_i, ev_i)``: row indices into the inputs.
     """
+    # Sort by time, then stably by group: rows end up grouped, time-ordered within a group.
     o = torch.argsort(times, stable=True)
     o = o[torch.argsort(groups[o], stable=True)]
     _, counts = torch.unique_consecutive(groups[o], return_counts=True)
+    # Each sorted row's rank within its group: its position minus its group's start.
     starts = torch.repeat_interleave(torch.cumsum(counts, 0) - counts, counts)
     rank = torch.arange(len(o), device=o.device) - starts
     is_cal = rank < torch.repeat_interleave(counts // 2, counts)
@@ -121,6 +171,19 @@ def _in_batch_halves(
     ``random`` halves a random permutation. ``chronological`` puts each group's earlier half in
     cal and its later half in ev, so the quantile always comes from the past of the windows it is
     scored on, as it does at deployment.
+
+    Args:
+        n:      number of rows in the batch.
+        split:  ``"random"`` or ``"chronological"``.
+        gen:    generator for the random permutation.
+        groups: (n,) group id per row; required by the chronological split.
+        times:  (n,) time order per row; required by the chronological split.
+
+    Returns:
+        ``(cal_i, ev_i)``: row indices into the batch.
+
+    Raises:
+        ValueError: if the chronological split is missing ``groups`` or ``times``.
     """
     if split == "chronological":
         if groups is None or times is None:
@@ -150,6 +213,26 @@ def _conformal_loss_class_conditional(
     over present regions. The scale is a single shared network, so gradients from every region's
     coverage term update the same weights: a per-region objective with pooled parameters. In-batch
     split trick: quantiles from the ``cal_i`` rows, coverage/size on the ``ev_i`` rows.
+
+    ``loss = size_weight * mean soft |C| + kappa * mean over regions of max(0, (1 - alpha) -
+    soft coverage)``, where a class's soft membership is ``sigmoid((q_c - s_c) / tau)``.
+
+    Args:
+        net:         the scale network being trained.
+        signals:     (n, n_signals) standardized signals of the batch.
+        probs:       (n, K) softmax probabilities.
+        labels:      (n,) true regions.
+        n_classes:   number of regions K.
+        alpha:       miscoverage level.
+        tau:         sigmoid temperature of the soft membership.
+        kappa:       weight on the coverage shortfall.
+        cal_i:       rows the quantiles come from.
+        ev_i:        rows size and coverage are measured on.
+        size_weight: weight on the size term.
+
+    Returns:
+        ``(loss, mean soft size, mean soft coverage)``; the last two are detached floats
+        over the ev rows.
     """
     n = signals.shape[0]
     scale = net(signals)  # (n,) shared
@@ -212,10 +295,22 @@ def train_scale(
         probs:       (n, n_classes) softmax probabilities for the same windows.
         labels:      (n,) true class index.
         alpha:       miscoverage level, coverage target is 1 - alpha.
+        hidden:      width of each hidden layer of a new net.
+        depth:       number of hidden layers of a new net.
+        epochs:      maximum number of epochs.
+        lr:          Adam learning rate.
+        weight_decay: Adam L2 weight decay.
+        batch_size:  rows per batch (capped at ``n``); a trailing partial batch is dropped.
         tau:         sigmoid temperature for soft set membership.
         kappa:       weight on the coverage shortfall.
         size_weight: weight on the sharpness term, relative to the coverage term.
-        early_stop_patience: epochs without held-out improvement before stopping early.
+        val_signals_z: (m, n_signals) standardized signals of the held-out early-stopping
+                     block. Early stopping runs only when this, ``val_probs`` and
+                     ``val_labels`` are all given.
+        val_probs:   (m, n_classes) softmax probabilities of the held-out block.
+        val_labels:  (m,) true class index of the held-out block.
+        early_stop_patience: epochs without held-out improvement before stopping early
+                     (None = never stop early, but still restore the best epoch).
         n_classes:   region count for the class-conditional loss, defaults to
                      ``probs.shape[1]``.
         split:       how each batch is halved into the quantile (cal) and scored (ev) rows.
@@ -226,11 +321,17 @@ def train_scale(
         val_groups:  the same for the early-stopping rows.
         init_net:    a trained net to continue from (fine-tuning); a copy is trained, the
                      argument is left untouched. ``None`` starts at sigma = 1.
+        seed:        seed for the initialization, the batch order and the random split.
+        device:      torch device string.
 
     Returns:
         (net, report). ``report.collapsed_to_standard`` is True when the net never left σ = 1,
         which is the honest "the signals earned nothing" outcome. ``report.best_epoch`` is the
         restored epoch when early stopping was used.
+
+    Raises:
+        ValueError: if the inputs differ in length, there are fewer than 32 fitting rows,
+            ``split`` is unknown, or the chronological split is missing its groups.
     """
     if len(signals_z) != len(probs) or len(probs) != len(labels):
         raise ValueError(
@@ -271,6 +372,7 @@ def train_scale(
     def _loss(
         sig_b: Tensor, prob_b: Tensor, lab_b: Tensor, cal_i: Tensor, ev_i: Tensor
     ) -> tuple[Tensor, float, float]:
+        """The conformal loss on one batch, with this run's fixed hyperparameters."""
         return _conformal_loss_class_conditional(
             net,
             sig_b,
@@ -323,6 +425,8 @@ def train_scale(
         nb = 0
         for lo in range(0, n - bs + 1, bs):
             idx = perm[lo : lo + bs]
+            # The batch's row indices double as time order: the fitting rows are in
+            # chronological order within each group.
             cal_i, ev_i = _in_batch_halves(
                 len(idx), split, gen, None if G is None else G[idx], idx
             )
@@ -370,7 +474,16 @@ def train_scale(
 
 
 def scale_of(net: ScaleNet, signals_z: np.ndarray, device: str = "cpu") -> np.ndarray:
-    """(n,) strictly positive σ for the given standardized signals."""
+    """Evaluate a trained scale on standardized signals.
+
+    Args:
+        net:       the trained scale network; put in eval mode.
+        signals_z: (n, n_signals) signals standardized with the net's training stats.
+        device:    torch device string.
+
+    Returns:
+        (n,) strictly positive float64 σ.
+    """
     net.eval()
     with torch.no_grad():
         X = torch.as_tensor(
@@ -392,7 +505,14 @@ def signal_sensitivity(
     values are comparable across mazes.
 
     Standardizes ``signals_raw`` (n, n_signals) with the net's own training mean/std, runs one
-    forward pass, and backpropagates ``log(sigma).sum()`` to each input.
+    forward pass, and backpropagates ``log(sigma).sum()`` to each input. Each window's sigma
+    depends only on its own row, so the gradient of the sum is the per-window gradient.
+
+    Args:
+        net:         the trained scale network.
+        signals_raw: (n, n_signals) raw signals in ``SIGNALS`` order.
+        signal_mean: (n_signals,) the mean the net was trained with.
+        signal_std:  (n_signals,) the std the net was trained with.
 
     Returns:
         (n, n_signals) gradients, one row per window.
@@ -409,6 +529,10 @@ def signal_sensitivity_for_bundle(bundle: dict) -> dict[str, Any] | None:
 
     Each tested session's sigma (``sigma_nets.pt``) is differentiated on that session's own
     test windows; the absolute gradients are then pooled over every test window.
+
+    Args:
+        bundle: a chain bundle from ``load_maze_bundles``, which records the paths of its
+            ``sigma_nets.pt`` and ``arrays.npz``.
 
     Returns:
         ``{"signals": [...], "mean_abs_log_grad": array of shape (n_signals,)}``, or ``None`` if the
