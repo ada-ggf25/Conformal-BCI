@@ -21,8 +21,15 @@ N_SIGMA_BINS = 10
 def weighted_pearson(x: np.ndarray, y: np.ndarray, w: np.ndarray) -> float:
     """Pearson's r between ``x`` and ``y`` with each point weighted by ``w``.
 
-    Equal to the ordinary Pearson r over the points repeated ``w`` times. NaN when fewer than
-    two points or either side has no spread.
+    Equal to the ordinary Pearson r over the points repeated ``w`` times.
+
+    Args:
+        x: (m,) first coordinate of each point.
+        y: (m,) second coordinate of each point.
+        w: (m,) non-negative weight of each point.
+
+    Returns:
+        The weighted r, or NaN when fewer than two points or either side has no spread.
     """
     x, y, w = (np.asarray(v, dtype=float) for v in (x, y, w))
     if len(x) < 2:
@@ -38,7 +45,16 @@ def weighted_pearson(x: np.ndarray, y: np.ndarray, w: np.ndarray) -> float:
 def _group_points(
     values: np.ndarray, error: np.ndarray, groups: list[np.ndarray]
 ) -> dict[str, np.ndarray]:
-    """One (mean value, error rate, count) point per non-empty group of window indices."""
+    """One (mean value, error rate, count) point per non-empty group of window indices.
+
+    Args:
+        values: (n,) per-window value (set size or sigma).
+        error:  (n,) per-window decoder error.
+        groups: arrays of window indices; empty ones are dropped.
+
+    Returns:
+        ``{"value", "error_rate", "n"}``, one entry per non-empty group.
+    """
     groups = [g for g in groups if len(g)]
     return {
         "value": np.array([values[g].mean() for g in groups]),

@@ -1,4 +1,8 @@
-"""Calibration functions: compute the score threshold q_hat from a held-out set."""
+"""Calibration functions: compute the score threshold q_hat from a held-out set.
+
+If the calibration and test scores are exchangeable, a test score falls at or below q_hat
+with probability at least 1 - alpha.
+"""
 
 from __future__ import annotations
 
