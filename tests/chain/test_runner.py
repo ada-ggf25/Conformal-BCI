@@ -19,8 +19,11 @@ from src.chain.order import prepare_chain
 from src.chain.pool import pooled_qhats
 from src.chain.runner import SWEEP_TARGETS, ChainConfig, _save, _unit_scores, run_chain
 from src.chain.stages import TrainBudget
+from src.conformal.learned import ScaleNet, scale_of
+from src.conformal.signals import SIGNALS, SignalStats, standardize_signals
 from src.data.config import WINDOW_SIZE
 from src.models.config import MAIN_EARLY_STOP_MIN_DELTA
+from src.utils.production_config import MLP_DEPTH, MLP_HIDDEN
 from src.utils.splits import chronological_task_split
 
 N_CLASSES = 4
@@ -328,3 +331,21 @@ def test_a_resumed_run_keeps_the_full_training_log(tmp_path):
     assert [(e["session"], e["step1"]["train_loss"]) for e in resumed] == [
         (e["session"], e["step1"]["train_loss"]) for e in _logged()[1]
     ]
+
+
+def test_logged_sigma_inputs_rescore_the_stored_calibration_block():
+    """The stored sigma net, applied to the logged calibration signals and probabilities,
+    gives exactly the stored own-block sigma and scores (1 - p_y) / sigma: the logged fit
+    inputs are the calibration windows, in order, under the tested session's model."""
+    rows, log = _logged()
+    for j, row in enumerate(rows):
+        va = log[CFG.warmup + j]["fit_inputs"]["va"]
+        net = ScaleNet(len(SIGNALS), MLP_HIDDEN, MLP_DEPTH)
+        net.load_state_dict(row["sigma_state"])
+        stats = SignalStats(*(np.asarray(v) for v in row["signal_stats"]))
+        sigma = scale_of(net, standardize_signals(va["u"], stats))
+        p_true = va["probs"][np.arange(len(va["labels"])), va["labels"]]
+        own = row["calibration"][0]
+        np.testing.assert_array_equal(own["labels"], va["labels"])
+        np.testing.assert_allclose(own["sigma"], sigma, rtol=1e-6)
+        np.testing.assert_allclose(own["scores"], (1 - p_true) / sigma, rtol=1e-6)

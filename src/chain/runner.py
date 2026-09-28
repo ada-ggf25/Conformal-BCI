@@ -92,8 +92,10 @@ def run_chain(
         log:          progress sink.
         stop_after:   stop once this many sessions are done (for interrupting in tests).
         training_log: if given, receives one entry per trained session (warm-up included):
-                      ``{"session", "warmup", "step1", "step2", "sigma"}`` with the training
-                      curves of ``ChainModel.history``. Kept in the checkpoint across a resume.
+                      ``{"session", "warmup", "step1", "step2", "sigma", "fit_inputs"}``: the
+                      training curves of ``ChainModel.history``, and the train (``tr``) and
+                      calibration (``va``) blocks' ``{"u", "probs", "labels"}`` sigma was fit
+                      on. Kept in the checkpoint across a resume.
 
     Returns:
         One row per tested session (see ``_evaluate_session``).
@@ -130,7 +132,14 @@ def run_chain(
         )
         if training_log is not None:
             training_log.append(
-                {"session": s, "warmup": i < cfg.warmup, **model.history}
+                {
+                    "session": s,
+                    "warmup": i < cfg.warmup,
+                    **model.history,
+                    # what sigma was fit on and calibrated with, so any other sigma can be
+                    # trained offline on the same decoder outputs
+                    "fit_inputs": {k: dict(v) for k, v in inputs.items()},
+                }
             )
         if i >= cfg.warmup:
             past = chain[max(0, i - max_past) : i]
@@ -187,7 +196,8 @@ def _evaluate_session(
         mouse_id:       the session's mouse.
 
     Returns:
-        The session's row: identity and sizes, the test labels, relative sigma and
+        The session's row: identity and sizes, the test windows' indices within the session
+        (``test_idx``), the test labels, relative sigma and
         signals, ``methods`` (``evaluate_block`` output per method: ``chain_<rule>`` for
         every rule, ``chain_sigma1``, and ``fresh`` with the baseline), ``sweep`` (coverage
         and size per target), the deployed sigma's weights and signal stats, the test
@@ -260,6 +270,7 @@ def _evaluate_session(
         "n_neurons": int(configs[s]["n_total"]),
         "n_cal": len(d["val_idx"]),
         "n_test": len(d["test_idx"]),
+        "test_idx": np.asarray(d["test_idx"]),
         "labels": test_blk["labels"],
         "sigma_rel": deployed["sigma"] / np.median(deployed["sigma"]),
         "sigma": deployed["sigma"],
