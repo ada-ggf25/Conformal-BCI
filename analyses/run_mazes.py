@@ -68,6 +68,10 @@ EXCLUDE_SESSIONS: dict[str, list[str]] = {
 }
 
 
+# what --force deletes before rerunning a (maze, seed): the completion marker first
+FORCE_REMOVES = ("arrays.npz", "metrics.json", "sigma_nets.pt", "checkpoint.pt")
+
+
 def bundle_dir(root: Path, paradigm: str, seed: int) -> Path:
     """Where one (maze, seed) run writes its bundle and executed notebook."""
     return root / paradigm_slug(paradigm) / "ALL_MICE" / f"seed_{seed}"
@@ -152,8 +156,11 @@ def main() -> int:
                 skipped.append(tag)
                 continue
             print(f"\n=== {tag} ===")
-            if args.force:  # start over, not from an interrupted run's checkpoint
-                (out_dir / "checkpoint.pt").unlink(missing_ok=True)
+            if args.force:
+                # Start over: no checkpoint to resume from, and no old bundle that an
+                # interrupted rerun would leave looking complete (arrays.npz goes first).
+                for name in FORCE_REMOVES:
+                    (out_dir / name).unlink(missing_ok=True)
             try:
                 run_one(
                     pg,

@@ -144,6 +144,15 @@ class TestMain:
         sweep("--paradigm", "Y_Maze", "--seeds", "42", "--force")
         assert len(sweep.calls) == 1 and not (d / "checkpoint.pt").exists()
 
+    def test_a_failed_forced_rerun_leaves_no_old_bundle_behind(self, sweep):
+        """--force deletes the old bundle before rerunning, so a rerun that dies midway is
+        rerun next time instead of being skipped as complete with stale results."""
+        d = run_mazes.bundle_dir(sweep.root, "Y_Maze", 42)
+        _complete(d)
+        sweep.fail.add(("Y_Maze", 42))
+        sweep("--paradigm", "Y_Maze", "--seeds", "42", "--force")
+        assert not run_mazes.is_complete(d)
+
     def test_a_failed_run_does_not_stop_the_rest(self, sweep, capsys):
         """One broken (maze, seed) is reported and the sweep carries on; the exit code is 1."""
         sweep.fail.add(("Y_Maze", 42))
