@@ -342,3 +342,56 @@ def test_bundle_keeps_probabilities_and_the_calibration_table():
     np.testing.assert_array_equal(arrays["cal_score"], [0.4, 0.1, 0.2, 0.9])
     np.testing.assert_array_equal(arrays["cal_sigma"], [1.5, 1.0, 1.0, 3.0])
     assert metrics["training"] == log
+
+
+def test_bundle_keeps_sweep_window_positions_and_sigma_fit_inputs():
+    """Sweep results per window and target, each test window's index in its session, and
+    every chain session's sigma training and calibration windows, warm-up included, in chain
+    order; metrics.json keeps the curves but not the arrays."""
+    rows = [
+        _row("A_2", True, [0], [1], [1 / 3], [0], ["own"], sweep_cov=[0]),
+        _row("B_3", False, [1, 2], [1, 0], [1 / 3, 2 / 3], [0, 1], ["own", "own"],
+             sweep_cov=[0, 1]),
+    ]  # fmt: skip
+    rows[0]["test_idx"] = np.array([4])
+    rows[1]["test_idx"] = np.array([7, 8])
+
+    def block(labels, first_prob):
+        """A fit block: labels, probs whose class-0 column is first_prob, signals = label."""
+        n = len(labels)
+        probs = np.column_stack([np.full(n, first_prob), np.full(n, 1 - first_prob)])
+        return {"labels": np.array(labels), "probs": probs,
+                "u": np.tile(np.array(labels, float)[:, None], (1, len(SIGNALS)))}  # fmt: skip
+
+    log = [
+        {"session": s, "warmup": w, "step1": {},
+         "fit_inputs": {"tr": block(tr, p), "va": block(va, p)}}
+        for s, w, tr, va, p in (
+            ("W_1", True, [0, 1], [1], 0.1),
+            ("A_2", False, [1], [0, 0], 0.2),
+            ("B_3", False, [0], [1], 0.3),
+        )
+    ]  # fmt: skip
+    metrics, arrays = build_chain_bundle(
+        rows, chain=["W_1", "A_2", "B_3"], n_warmup=1,
+        session_data={s: {"regions": np.zeros(9, int), "train_idx": np.array([0]),
+                          "val_idx": np.array([1]), "test_idx": np.array([2])}
+                      for s in ("W_1", "A_2", "B_3")},
+        n_classes=3, paradigm="Y_Maze", seed=7, alpha=0.1, rule="B3", config={}, training=log,
+    )  # fmt: skip
+    np.testing.assert_array_equal(arrays["win_window_idx"], [4, 7, 8])
+    np.testing.assert_array_equal(arrays["sweep_targets"], [0.5, 0.9])
+    np.testing.assert_array_equal(arrays["win_covered_sweep"], [[0, 1], [0, 1], [1, 0]])
+    np.testing.assert_allclose(
+        arrays["win_size_over_k_sweep"],
+        [[1 / 3, 1 / 3], [1 / 3, 1 / 3], [2 / 3, 2 / 3]],
+    )
+    np.testing.assert_array_equal(arrays["fit_chain_idx"], [0, 0, 0, 1, 1, 1, 2, 2])
+    np.testing.assert_array_equal(arrays["fit_block"], [0, 0, 1, 0, 1, 1, 0, 1])
+    np.testing.assert_array_equal(arrays["fit_region"], [0, 1, 1, 1, 0, 0, 0, 1])
+    np.testing.assert_allclose(
+        arrays["fit_probs"][:, 0], [0.1, 0.1, 0.1, 0.2, 0.2, 0.2, 0.3, 0.3]
+    )
+    np.testing.assert_array_equal(arrays["fit_signals"][:, -1], arrays["fit_region"])
+    assert [e.get("fit_inputs") for e in metrics["training"]] == [None, None, None]
+    assert [e["session"] for e in metrics["training"]] == ["W_1", "A_2", "B_3"]

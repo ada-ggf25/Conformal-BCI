@@ -160,7 +160,12 @@ def build_chain_bundle(
         ``win_<field>`` or ``win_<field>_<method>``; the calibration table's arrays are
         ``cal_session_idx`` (the tested session, as ``win_session_idx``), ``cal_offset``
         (0 = its own block, k = k sessions back), ``cal_region``, ``cal_score`` and
-        ``cal_sigma``.
+        ``cal_sigma``. Also ``win_window_idx`` (the window's index within its session),
+        ``sweep_targets`` with ``win_covered_sweep`` / ``win_size_over_k_sweep`` (one column
+        per target), and, from ``training``, the windows every chain session's sigma was fit on
+        (``fit_chain_idx`` into ``metrics['sessions']``, ``fit_block`` 0 = train and
+        1 = calibration, ``fit_region``, ``fit_probs``, ``fit_signals`` with columns in
+        ``SIGNALS`` order, raw).
     """
     target = 1.0 - alpha
     main = f"chain_{rule}"
@@ -294,8 +299,37 @@ def build_chain_bundle(
         )
         arrays["cal_score"] = np.concatenate([c["scores"] for _, c in blocks])
         arrays["cal_sigma"] = np.concatenate([c["sigma"] for _, c in blocks])
+    if all("test_idx" in r for r in rows):
+        arrays["win_window_idx"] = np.concatenate([r["test_idx"] for r in rows])
+    targets = list(rows[0]["sweep"])
+    arrays["sweep_targets"] = np.array(targets, dtype=float)
+    for key in ("covered", "size_over_k"):
+        arrays[f"win_{key}_sweep"] = np.stack(
+            [np.concatenate([r["sweep"][t][key] for r in rows]) for t in targets],
+            axis=1,
+        )
     if training is not None:
-        metrics["training"] = training
+        fits = [
+            (i, e["fit_inputs"]) for i, e in enumerate(training) if "fit_inputs" in e
+        ]
+        if fits:
+            fit_blocks = [
+                (i, b, f[k]) for i, f in fits for b, k in enumerate(("tr", "va"))
+            ]
+            arrays["fit_chain_idx"] = np.concatenate(
+                [np.full(len(x["labels"]), i) for i, _, x in fit_blocks]
+            )
+            arrays["fit_block"] = np.concatenate(
+                [np.full(len(x["labels"]), b) for _, b, x in fit_blocks]
+            )
+            arrays["fit_region"] = np.concatenate(
+                [x["labels"] for *_, x in fit_blocks]
+            ).astype(int)
+            arrays["fit_probs"] = np.concatenate([x["probs"] for *_, x in fit_blocks])
+            arrays["fit_signals"] = np.concatenate([x["u"] for *_, x in fit_blocks])
+        metrics["training"] = [
+            {k: v for k, v in e.items() if k != "fit_inputs"} for e in training
+        ]
     return metrics, arrays
 
 
