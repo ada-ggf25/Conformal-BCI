@@ -145,7 +145,7 @@ make setup-all       # all of the above
 
 More details about setup in [`Makefile`](Makefile).
 
-To access the database, copy `.env.example` to `.env` and fill in `MONGODB_URI`, `MONGODB_DATABASE`, and the `SSH_*` variables if you need an SSH tunnel.
+To access the database, copy `.env.example` to `.env` and fill in `MONGODB_URI`, `MONGODB_DATABASE`, and the `SSH_*` variables if you need an SSH tunnel. A dump of the database restored into a local MongoDB server works the same way: point `MONGODB_URI` at it and leave `SSH_HOST` empty. Restore it with the same MongoDB major version the dump came from.
 
 ## Running Code
 
@@ -169,7 +169,7 @@ analyses/artifacts/<paradigm>/ALL_MICE/  # per-maze metrics, arrays, and models
 analyses/artifacts/cross_maze.ipynb      # executed cross-maze comparison notebook
 ```
 
-These runs need the `.env` database settings and live MongoDB access. More details are in [`analyses/README.md`](analyses/README.md) and [`src/README.md`](src/README.md).
+These runs need the `.env` database settings and a running MongoDB server, either the remote one or a local copy. More details are in [`analyses/README.md`](analyses/README.md) and [`src/README.md`](src/README.md).
 
 For reproducibility purposes, [`analyses/per_maze.ipynb`](analyses/per_maze.ipynb) contains a complete run for the Linear Maze (More_Water), while [`analyses/cross_maze.ipynb`](analyses/cross_maze.ipynb) contains the full comparison across all mazes used in this study.
 
