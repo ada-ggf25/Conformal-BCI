@@ -148,7 +148,7 @@ Each (maze, seed) run of `analyses/per_maze.ipynb` writes one bundle to `analyse
 | File | Contents |
 |---|---|
 | `metrics.json` | the pooled summaries, per-session and per-region results, the sweep, the run's configuration (the notebook's parameters and the frozen hyperparameters), and every session's training curves |
-| `arrays.npz` | one row per tested window: its session, region, probabilities, scale, relative scale, threshold level, the four signals, and each method's coverage, size and error; plus every calibration score the deployed model used (the session's own block and the re-scored past blocks), so any calibration rule can be recomputed offline |
+| `arrays.npz` | one row per tested window: its session, region, probabilities, scale, relative scale, threshold level, the four signals, and each method's coverage, size and error; its index within its session, and its coverage and size at every sweep target; every calibration score the deployed model used (the session's own block and the re-scored past blocks), so any calibration rule can be recomputed offline; and the windows every session's scale was trained and calibrated on (probabilities, signals, regions), so another scale can be trained offline on the same decoder outputs |
 | `sigma_nets.pt` | every tested session's scale network and signal statistics |
 
 `src.utils.bundle_readers` reads bundles back and aggregates them across seeds as mean and standard deviation, which is what `analyses/cross_maze.ipynb` plots.
