@@ -114,7 +114,7 @@ class TestBuildHybridNeuronMapping:
 
     @patch("src.data.hybrid_io.get_session_neuron_ids")
     def test_shared_ids_are_the_intersection(self, mock_ids):
-        """The shared/specific split is the pooled model's input contract: a wrong
+        """The shared/specific split is the encoder's input contract: a wrong
         partition routes a neuron through the wrong projection without any error."""
         mock_ids.side_effect = lambda db, name: {
             "A": ["n1", "n2", "n3"],

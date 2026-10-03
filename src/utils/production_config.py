@@ -1,4 +1,4 @@
-"""The pooled per-maze pipeline's tuned-and-frozen production recipe."""
+"""The session-chain pipeline's tuned-and-frozen production recipe."""
 
 # Step 1: BC-VAE encoder
 STEP1_REGION_WEIGHT = 0.2

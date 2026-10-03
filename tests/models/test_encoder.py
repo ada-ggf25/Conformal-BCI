@@ -54,7 +54,7 @@ def test_logvar_is_not_forced_positive():
 
 
 def test_each_session_routes_through_its_own_input_projection():
-    """The pooled model's core mechanism: sessions of different widths, including
+    """The multi-session encoder's core mechanism: sessions of different widths, including
     one with no session-specific neurons at all, must all decode to n_classes."""
     out2 = _encoder()(torch.zeros(_BATCH, _T, 5), "S2", return_all=True)
     assert out2["region_logits"].shape == (_BATCH, _NC)
