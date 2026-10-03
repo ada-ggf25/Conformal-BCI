@@ -44,7 +44,7 @@ The labeled windows then feed the train/calibration/test split, the BC-VAE and T
   <img src="docs/readme-images/pipeline-image.png" alt="Protocol summary" width="980">
 </p>
 
-Figure 4: Data split protocol and full conformal pipeline. Top: Sessions 80/10/10 split. The first block, aggregated across all sessions, fits the BC-VAE, the Transformer decoder, and the MLP. The middle validation/calibration block, aggregated across all sessions, supports early stopping and fixes the final thresholds $\hat q_k$ per region. The final test block, aggregated across all sessions, is held out for later evaluation. Bottom: The encoding-decoding pipeline maps each spike-count window to maze region probabilities $\hat p(x)$. The four uncertainty signals come together as $u(x)$, which is passed to the conformal MLP, which then outputs the scale $\sigma_\theta(x)$. Scores $S(x,k)$ are compared with the fixed thresholds $\hat q_k$ per region to produce the trust region $\widehat{\mathcal{C}}(x)$. The diagram was crafted using the [`TikZMaker editor`](https://tikzmaker.com/editor).
+Figure 4: Data split protocol and full conformal pipeline. Top: Each session is split chronologically into train/calibration/test blocks (60/30/10) and enters a chain, in calendar order across all mice: the model carried from the previous session is fine-tuned on the session's first block, the calibration block drives early stopping and fixes the thresholds $\hat q_k$ per region (a region with too few windows borrows the last three sessions' calibration blocks), and the session is tested on its last block. The first three sessions are a warm-up, split 70/30 and never tested. Bottom: The encoding-decoding pipeline maps each spike-count window to maze region probabilities $\hat p(x)$. The four uncertainty signals come together as $u(x)$, which is passed to the conformal MLP, which then outputs the scale $\sigma_\theta(x)$. Scores $S(x,k)$ are compared with the fixed thresholds $\hat q_k$ per region to produce the trust region $\widehat{\mathcal{C}}(x)$. The diagram was crafted using the [`TikZMaker editor`](https://tikzmaker.com/editor).
 
 ## Results
 
@@ -118,8 +118,8 @@ ML-Decoding/                 # repository root
 │   ├── models/              # BC-VAE, Transformer decoder, training, and decoder metrics
 │   ├── conformal/           # learned class-conditional split-conformal layer
 │   └── utils/               # discovery, chronological splits, pipeline assembly, bundles
-├── analyses/                # pooled per-maze analysis notebooks and runner
-│   ├── per_maze.ipynb       # pooled per-maze training and evaluation notebook
+├── analyses/                # per-maze analysis notebooks and runner
+│   ├── per_maze.ipynb       # per-maze session-chain training and evaluation notebook
 │   ├── cross_maze.ipynb     # cross-maze comparison and final table/figure generation
 │   ├── run_mazes.py         # papermill driver for executing per_maze.ipynb
 │   └── artifacts/           # generated model and result bundles, not committed (gitignored)
