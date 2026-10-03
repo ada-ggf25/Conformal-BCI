@@ -100,12 +100,12 @@ python-typecheck:
 
 # Experimental analysis run.
 # These need .env + a live MongoDB connection and train models:
-#   make maze                          — train the pooled model for all 3 mazes x 5 seeds
+#   make maze                          — run the session chain for all 3 mazes x 5 seeds
 #   make maze PARADIGM=Y_Maze SEEDS=42 — one maze, one seed
 #   make maze-quick                    — 2-epoch smoke run of the plumbing (one seed)
 #   make cross-maze                    — compare every maze that has a saved results bundle
-# per_maze.ipynb pools every usable mouse in a paradigm into one model and writes one bundle
-# per seed to analyses/artifacts/<Paradigm>/ALL_MICE/seed_<k>/. Finished bundles are skipped,
+# per_maze.ipynb trains one session chain over every usable session of a paradigm (all mice,
+# calendar order) and writes one bundle per seed to analyses/artifacts/<Paradigm>/ALL_MICE/seed_<k>/. Finished bundles are skipped,
 # so an interrupted sweep resumes. cross_maze.ipynb reads every seed's bundle and reports
 # mean +- sd across seeds to analyses/artifacts/cross_maze.ipynb.
 PARADIGM ?=
