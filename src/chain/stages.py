@@ -39,6 +39,7 @@ from ..models.latents import (
 from ..models.training import train_step1, train_step2
 from ..utils.pipeline_prep import compute_class_counts
 from ..utils.production_config import (
+    CLASS_WEIGHTS,
     MLP_CAL_SPLIT,
     MLP_DEPTH,
     MLP_HIDDEN,
@@ -145,6 +146,7 @@ class ChainModel:
         alpha: float,
         seed: int,
         train_sigma: bool = True,
+        class_weights: bool = CLASS_WEIGHTS,
     ) -> dict[str, Any]:
         """Train (or fine-tune) the stages on session ``s``'s training block.
 
@@ -162,13 +164,15 @@ class ChainModel:
             seed:         seed for sigma's training.
             train_sigma:  False skips sigma (the standard split-conformal baseline); the
                           signal stats are still fitted.
+            class_weights: weight the region losses by inverse region frequency over this
+                          session's training block (off: every window counts equally).
 
         Returns:
             The training-block and calibration-block signal inputs sigma was fit on (for the
             coverage-sweep branches): ``{"tr", "va"}``, each ``{"u", "probs", "labels"}``.
         """
         batch = min(BATCH_SIZE, 256)
-        # Train on this session alone, weighting classes by its own training block.
+        # Train on this session alone; class weights (if on) come from its own training block.
         one = {s: d}
         counts = compute_class_counts(one, [s])
         silent: Callable[[str], None] = lambda _m: None  # noqa: E731
@@ -195,7 +199,7 @@ class ChainModel:
             lr=STEP1_LEARNING_RATE,
             classifier_weight_decay=STEP1_WEIGHT_DECAY,
             region_weight=STEP1_REGION_WEIGHT,
-            class_weight_power=STEP1_CLASS_WEIGHT_POWER,
+            class_weight_power=STEP1_CLASS_WEIGHT_POWER if class_weights else 0.0,
             class_counts=counts,
             kl_weight=STEP1_KL_WEIGHT,
             kl_free_bits=STEP1_KL_FREE_BITS,
@@ -224,7 +228,7 @@ class ChainModel:
             num_epochs=budget.epochs,
             lr=STEP2_LEARNING_RATE,
             class_counts=counts,
-            class_weight_power=STEP2_CLASS_WEIGHT_POWER,
+            class_weight_power=STEP2_CLASS_WEIGHT_POWER if class_weights else 0.0,
             contrastive_weight=STEP2_CONTRASTIVE_WEIGHT,
             early_stop_patience=budget.patience,
             log_every=quiet,

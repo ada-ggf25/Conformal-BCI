@@ -10,8 +10,12 @@ STEP1_KL_WEIGHT = 0.5
 STEP1_KL_FREE_BITS = 0.0
 """Per-dimension KL floor in nats (0 = off), guards against ignored latent dims."""
 
+CLASS_WEIGHTS = False
+"""Weight Step 1's and Step 2's region losses by inverse region frequency. Off: every window counts
+equally, so training optimizes raw accuracy, the reported metric. On: the powers below apply."""
+
 STEP1_CLASS_WEIGHT_POWER = 1.0
-"""Exponent on the inverse-frequency class weights (1.0 = full)."""
+"""Exponent on the inverse-frequency class weights when ``CLASS_WEIGHTS`` is on (1.0 = full)."""
 
 STEP1_WEIGHT_DECAY = 1e-2
 """AdamW L2 on the region-classifier head only, to curb its overfitting."""
@@ -24,7 +28,7 @@ STEP2_DROPOUT = 0.1
 """Dropout in the alignment Transformer. The classifier head keeps its own fixed rates."""
 
 STEP2_CLASS_WEIGHT_POWER = 1.0
-"""Exponent on the inverse-frequency class weights."""
+"""Exponent on the inverse-frequency class weights when ``CLASS_WEIGHTS`` is on."""
 
 # windowing and labels
 LABEL_REDUCE = "mode"

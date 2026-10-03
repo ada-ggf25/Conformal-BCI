@@ -12,6 +12,7 @@ import torch
 
 from ..utils.production_config import (
     CHAIN_WARMUP_SESSIONS,
+    CLASS_WEIGHTS,
     POOL_RULE,
     POOL_SENSITIVITY,
 )
@@ -45,6 +46,8 @@ class ChainConfig:
         sweep_targets: coverage targets of the sweep; each non-deployed one retrains sigma.
         baseline:      also train a fresh model per tested session with standard split
                        conformal.
+        class_weights: weight the encoder's and decoder's region losses by inverse region
+                       frequency (the chain and the fresh baseline alike).
         budget:        epoch caps and patience for the trained stages.
     """
 
@@ -56,6 +59,7 @@ class ChainConfig:
     sensitivity: tuple[str, ...] = POOL_SENSITIVITY
     sweep_targets: tuple[float, ...] = SWEEP_TARGETS
     baseline: bool = True
+    class_weights: bool = CLASS_WEIGHTS
     budget: TrainBudget = field(default_factory=TrainBudget)
 
 
@@ -129,6 +133,7 @@ def run_chain(
             budget=cfg.budget,
             alpha=cfg.alpha,
             seed=cfg.seed,
+            class_weights=cfg.class_weights,
         )
         if training_log is not None:
             training_log.append(
@@ -246,7 +251,7 @@ def _evaluate_session(
         fresh = ChainModel(s, configs[s], n_classes, model.device)
         fresh.fit(
             s, d, from_scratch=True, budget=cfg.budget, alpha=cfg.alpha,
-            seed=cfg.seed, train_sigma=False,
+            seed=cfg.seed, train_sigma=False, class_weights=cfg.class_weights,
         )  # fmt: skip
         f_own = fresh.score(fresh.block(s, d, d["val_idx"]))
         f_test = fresh.score(fresh.block(s, d, d["test_idx"]))

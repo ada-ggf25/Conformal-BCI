@@ -19,6 +19,10 @@ from src.chain.stages import ChainModel, TrainBudget
 from src.conformal.learned import scale_of
 from src.conformal.signals import SIGNALS, standardize_signals
 from src.data.config import WINDOW_SIZE
+from src.utils.production_config import (
+    STEP1_CLASS_WEIGHT_POWER,
+    STEP2_CLASS_WEIGHT_POWER,
+)
 from src.utils.splits import chronological_task_split
 
 N_CLASSES, N_NEURONS, N_WIN = 3, 5, 80
@@ -185,3 +189,28 @@ def test_train_sigma_needs_frozen_statistics():
     m = ChainModel("S1", _config(), N_CLASSES, DEVICE)
     with pytest.raises(AssertionError):
         m.train_sigma({"tr": {}, "va": {}}, 0.1, None, BUDGET, 0)
+
+
+@pytest.mark.parametrize("on", [False, True])
+def test_class_weights_switch_sets_both_region_losses(monkeypatch, on):
+    """class_weights=False trains Step 1 and Step 2 with exponent 0 (every class weighs 1, the
+    raw-accuracy objective); True uses the configured inverse-frequency exponents."""
+    import src.chain.stages as stages
+
+    seen = {}
+    for name in ("train_step1", "train_step2"):
+        real = getattr(stages, name)
+
+        def spy(*args, _real=real, _name=name, **kwargs):
+            seen[_name] = kwargs["class_weight_power"]
+            return _real(*args, **kwargs)
+
+        monkeypatch.setattr(stages, name, spy)
+    torch.manual_seed(0)
+    m = ChainModel("S1", _config(), N_CLASSES, DEVICE)
+    m.fit("S1", _session(), from_scratch=True, budget=BUDGET, alpha=0.1, seed=0,
+          train_sigma=False, class_weights=on)  # fmt: skip
+    expected = (
+        (STEP1_CLASS_WEIGHT_POWER, STEP2_CLASS_WEIGHT_POWER) if on else (0.0, 0.0)
+    )
+    assert (seen["train_step1"], seen["train_step2"]) == expected
