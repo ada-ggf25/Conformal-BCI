@@ -66,7 +66,7 @@ For each session in order, `ChainModel.fit` fine-tunes the model carried from th
 \mathcal{L}_1 = \mathrm{NLL}_{\text{Poisson}}(x_{\text{raw}}) + 0.2\,\mathrm{CE}(\text{region}) + w_{\text{KL}}\,\mathrm{KL}\big(q(z \mid x)\,\|\,\mathcal{N}(0, I)\big),
 \]
 
-where the reconstruction target is the unnormalized binned activity and the cross-entropy is weighted by inverse class frequency. \(w_{\text{KL}}\) ramps linearly to 0.5 over the first 10 epochs, and only when training from scratch; a fine-tune uses the full weight at once.
+where the reconstruction target is the unnormalized binned activity and the cross-entropy is unweighted: every window counts equally, so training optimizes raw accuracy, the reported metric (`CLASS_WEIGHTS = False`; turned on, both steps weight their cross-entropy by inverse region frequency). \(w_{\text{KL}}\) ramps linearly to 0.5 over the first 10 epochs, and only when training from scratch; a fine-tune uses the full weight at once.
 
 **Step 2, the alignment decoder** (`AlignmentDecoder`). The encoder is frozen and each window is represented by its posterior mean. The decoder reads the means of the window and the 4 windows before it, front-padded at the session start. It passes them through a Transformer encoder and returns an aligned latent, which a classifier head turns into region probabilities \(\hat p(x) \in \Delta^{K-1}\). `train_step2` minimizes
 
