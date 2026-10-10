@@ -38,27 +38,50 @@ perceptron
 softmax
 variational
 
+quantile
 quantiles
 
+contrastive
+latents
+multiset
+recalibrated
+ReLU
+sigmoid
+
+entorhinal
 electrophysiological
 generalizability
+hippocampal
 
 pageanchor
 TikZMaker
 unsrtnat
 
-# NeurIPS paper checklist (checklist.tex)
-Crowdsourcing
-crowdsourcing
-IRB
-LLM
-LLMs
-NeurIPS
-anonymize
-anonymized
-aspirational
-curation
+# Appendix
+AdamW
+diag
+GELU
+GRU
+Hyperparameters
+Jacobians
+NLL
+TrainScale
+Xent
+accuracies
+logits
+miscoverage
+recalibrates
+rescaled
+softplus
+unnormalized
+
+# Related work
+covariate
+exchangeability
+hyperdimensional
+miscalibrated
+pretrained
+recalibrate
+reweighted
 hyperparameters
-pre
-preprocessed
-reproducibility
+ipynb
