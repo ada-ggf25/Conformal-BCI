@@ -1,5 +1,5 @@
 """Check American English spelling of the paper LaTeX source: main.tex and every file it
-``\\input``s (the NeurIPS checklist).
+``\\input``s.
 """
 
 import pathlib

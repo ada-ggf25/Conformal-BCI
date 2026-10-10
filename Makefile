@@ -36,7 +36,6 @@ setup-latex: setup-docs
 		latexmk \
 		lmodern \
 		texlive-bibtex-extra \
-		texlive-extra-utils \
 		texlive-fonts-recommended \
 		texlive-latex-base \
 		texlive-latex-extra \

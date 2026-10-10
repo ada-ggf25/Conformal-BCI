@@ -31,7 +31,7 @@ jobs:
       - name: Sync Python dependencies
         run: uv sync
 
-      - name: Install TeX Live, TeX Count and aspell dependencies
+      - name: Install TeX Live and aspell dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -41,7 +41,6 @@ jobs:
             latexmk \
             lmodern \
             texlive-bibtex-extra \
-            texlive-extra-utils \
             texlive-fonts-recommended \
             texlive-latex-base \
             texlive-latex-extra \
@@ -49,5 +48,5 @@ jobs:
             texlive-pictures \
             texlive-science
 
-      - name: Run paper checks (latex, limits, spelling)
+      - name: Run paper checks (latex, spelling, hygiene)
         run: make paper-test

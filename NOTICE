@@ -7,8 +7,7 @@ The license covers the code and documentation in this repository. It does not co
 
 - The neural recordings used in the paper, which are owned by the Liu Lab and are
   not distributed with this repository.
-- paper/neurips_2026.sty and paper/checklist.tex, which are the NeurIPS 2026 author-kit
-  files, included unmodified for building the manuscript and distributed under the
-  NeurIPS terms.
+- paper/neurips_2026.sty, the NeurIPS 2026 author-kit style file, included unmodified
+  for building the manuscript and distributed under the NeurIPS terms.
 - The photograph of the recording setup (docs/readme-images/set-up.jpeg and
   paper/figures/set_up.jpeg), which belongs to the Liu Lab.
