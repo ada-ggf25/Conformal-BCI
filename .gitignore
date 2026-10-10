@@ -15,22 +15,17 @@ site/
 # Ruff cache
 .ruff_cache/
 
+# AI-generated files
 **CLAUDE.md
 **AGENTS.md
 
 # submodules
 .gitmodules
 Vault-ML-Decoding/
+
 # Generated analysis outputs (heavy, regenerable) and old local run snapshots
 analyses/artifacts/
 analyses/checkpoints/
 
-# LaTeX build output
-paper/build/
-
-# Working plan for the session-chain pivot (local only, never committed)
-PIVOT_PLAN.md
-
-# Working plan for the paper refactor (local only, never committed)
-PAPER_PLAN.md
+# Coverage data from make src-coverage
 .coverage
