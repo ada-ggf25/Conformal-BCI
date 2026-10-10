@@ -1,7 +1,7 @@
-site_name: Uncertainty-Aware ML for Neural BCIs
+site_name: Conformal-BCI
 site_description: >
-  Uncertainty-Aware Machine Learning for Long-Term Neural Recordings
-  in Flexible Brain–Computer Interfaces
+  Code for Keeping Neural Decoders Calibrated Session by Session with
+  Learned Class-Conditional Conformal Prediction
 site_author: Guilherme Grancho Duarte Fernandes
 site_url: https://ada-ggf25.github.io/Conformal-BCI/
 repo_url: https://github.com/ada-ggf25/Conformal-BCI
