@@ -4,16 +4,6 @@
 
 A major challenge for the lasting reliability of brain–computer interfaces in real-world conditions is neural drift, which degrades decoder performance and makes decoders unreliable over time. At inference time the decoder's predictions arrive without labels, so that decline cannot be measured. This paper proposes a learned class-conditional split-conformal layer that is calibrated on labeled data recorded before inference and then, without labels, turns each decoder output into a prediction set of plausible labels. A small network learns a per-input scale of the conformal score from four label-free uncertainty signals read from the latent space and the decoder, and one threshold is calibrated per class, borrowing calibration data from recent sessions for rare classes. The layer is deployed in a session-by-session chain that carries a behavior-constrained variational autoencoder and a Transformer decoder across recording sessions. On 149 sessions from 13 mice implanted with flexible probes in 3 virtual-reality mazes, over 5 seeds, the layer reached 86.0%, 85.9% and 90.1% coverage at a 90% target, against 76.8%, 70.0% and 88.1% for standard split-conformal prediction on a model trained per session. The size of each conformal prediction set then serves as a label-free measure of the decoder's reliability at inference time.
 
-## Authors
-
-| Author | Affiliation |
-|---|---|
-| Guilherme Grancho Duarte Fernandes | John A. Paulson School of Engineering and Applied Sciences, Harvard University |
-| Hao Shen | John A. Paulson School of Engineering and Applied Sciences, Harvard University |
-| Tianshu Tan | John A. Paulson School of Engineering and Applied Sciences, Harvard University |
-| Tom Davison | Imperial College London |
-| Jia Liu | John A. Paulson School of Engineering and Applied Sciences, Harvard University |
-
 ## Method
 
 The recordings come from virtual-reality navigation sessions. A mouse runs on an omnidirectional ball in front of six monitors while a flexible brain probe records its neurons.
