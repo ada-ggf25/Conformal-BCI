@@ -1,6 +1,6 @@
 # Uncertainty-Aware ML for Neural BCIs
 
-This site documents the code of the paper *Keeping Neural Decoders Calibrated Session by Session with Learned Class-Conditional Conformal Prediction*, by Guilherme Grancho Duarte Fernandes, Hao Shen, Tianshu Tan, Tom Davison and Jia Liu (Harvard John A. Paulson School of Engineering and Applied Sciences and Imperial College London).
+This site documents the code of the [ML-Decoding repository](https://github.com/ada-ggf25/ML-Decoding) for the paper *Keeping Neural Decoders Calibrated Session by Session with Learned Class-Conditional Conformal Prediction*, by Guilherme Grancho Duarte Fernandes, Hao Shen, Tianshu Tan, Tom Davison and Jia Liu (Harvard John A. Paulson School of Engineering and Applied Sciences and Imperial College London).
 
 ---
 

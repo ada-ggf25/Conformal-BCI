@@ -10,7 +10,7 @@ PAPER := paper
 
 # First-time setup, in three tiers.
 #
-#   setup-python    python-checks.yml, src-tests.yml, mkdocs.yml
+#   setup-python    python-checks.yml, src-tests.yml, mkdocs.yml, docs-deploy.yml
 #   setup-docs      docs.yml
 #   setup-latex     paper-checks.yml
 #
