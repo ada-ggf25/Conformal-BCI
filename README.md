@@ -104,6 +104,7 @@ ML-Decoding/                 # repository root
 ├── Makefile                 # setup, test, documentation, and analysis targets
 ├── LICENSE                  # Apache License 2.0
 ├── NOTICE                   # copyright notice and what the license does not cover
+├── CITATION.cff             # citation metadata for the code and the paper
 ├── pyproject.toml           # Python package metadata and tool dependencies
 ├── uv.lock                  # locked uv environment
 ├── paper/                   # LaTeX source of the paper
@@ -188,7 +189,7 @@ The code used to perform the paper's analyses is in this repository. Each maze's
 
 ## Citation
 
-A citation entry will be added once the preprint is available.
+The citation metadata are in [`CITATION.cff`](CITATION.cff), which GitHub turns into the "Cite this repository" button. A BibTeX entry with the arXiv identifier will be added once the preprint is available.
 
 ## License
 
