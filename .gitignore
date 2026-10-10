@@ -30,4 +30,7 @@ paper/build/
 
 # Working plan for the session-chain pivot (local only, never committed)
 PIVOT_PLAN.md
+
+# Working plan for the paper refactor (local only, never committed)
+PAPER_PLAN.md
 .coverage
