@@ -3,7 +3,8 @@
 The build already fails on an undefined citation or a missing image. It does not notice a
 bibliography entry nobody cites (BibTeX drops it silently), a key defined twice, an image in
 ``figures/`` that the paper no longer uses, or an image that exists on this machine but was never
-committed (the build passes here and breaks on a fresh clone).
+committed (the build passes here and breaks on a fresh clone). It also keeps internal research-vault
+labels, which a reader cannot resolve, out of the manuscript.
 """
 
 import pathlib
@@ -104,3 +105,13 @@ def test_every_included_figure_is_committed():
     assert not problems, (
         "Included figures that a fresh clone would not have:\n" + "\n".join(problems)
     )
+
+
+# Decision records (ADR-012), experiment notes (EXP-004) and scenario names (scen.1).
+VAULT_LABEL = re.compile(r"\b(?:ADR|EXP)-\d+\b|\bscen\.\s?\d")
+
+
+def test_no_vault_labels():
+    """The paper never cites internal vault labels; describe the thing instead."""
+    found = sorted(set(VAULT_LABEL.findall(tex_source())))
+    assert not found, f"Internal vault labels in the paper source: {found}"
