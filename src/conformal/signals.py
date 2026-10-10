@@ -2,10 +2,10 @@
 
 Listed in ``SIGNALS`` column order, which is the order they are persisted in:
 
-    entropy         - a function of the softmax decoder predictions
-    variance        - the BC-VAE posterior variance, exp(logvar).mean
-    align_jacobian  - ||d z_aligned / d z||, the Step-2 alignment map's spectral norm
-    enc_jacobian    - ||d mu / d x||, the Step-1 encoder map's spectral norm
+- ``entropy``: the Shannon entropy of the decoder's softmax prediction.
+- ``variance``: the BC-VAE posterior variance, ``exp(logvar)`` averaged over latent dims.
+- ``align_jacobian``: ``||d z_aligned / d z||``, the Step-2 alignment map's spectral norm.
+- ``enc_jacobian``: ``||d mu / d x||``, the Step-1 encoder map's spectral norm.
 """
 
 from __future__ import annotations
@@ -28,44 +28,57 @@ SIGNALS = ("entropy", "variance", "align_jacobian", "enc_jacobian")
 """Canonical order of the four per-window uncertainty signals the learned scale reads."""
 
 
-def compute_window_signals(
+def window_signals(
     step1_model: SharedTemporalClassifier,
     alignment_decoder: AlignmentDecoder,
-    session_data: dict,
-    valid_sessions: list[str],
     *,
+    session: str,
+    windows: np.ndarray,
+    latents: np.ndarray,
+    logvar: np.ndarray,
+    probs: np.ndarray,
+    idx: np.ndarray,
     seq_len: int,
     device: torch.device,
-) -> None:
-    """Compute the four uncertainty signals per window and store them per session."""
-    for s in valid_sessions:
-        d = session_data[s]
-        n = len(d["regions"])
+) -> np.ndarray:
+    """The four signals (``SIGNALS`` order) for the windows ``idx`` of one session.
 
-        # 1. entropy
-        probs = d["probs"].astype(np.float64)
-        ent = -(probs * np.log(np.clip(probs, 1e-10, 1.0))).sum(axis=1)
+    ``windows``, ``latents``, ``logvar`` and ``probs`` are the session's full per-window arrays:
+    the alignment Jacobian reads each window's preceding latents as context.
 
-        # 2. posterior variance
-        var = np.exp(d["logvar"].astype(np.float64)).mean(axis=1)
+    Args:
+        step1_model:       the trained BC-VAE, for the encoder Jacobian.
+        alignment_decoder: the trained alignment decoder, for the alignment Jacobian.
+        session:           the session's name, for the encoder's per-session layers.
+        windows:           (n_windows, T, n_neurons) normalized windows of the session.
+        latents:           (n_windows, latent_dim) Step 1 posterior means.
+        logvar:            (n_windows, latent_dim) Step 1 posterior log-variances.
+        probs:             (n_windows, n_classes) decoder softmax probabilities.
+        idx:               indices of the windows to compute the signals for.
+        seq_len:           the alignment decoder's sequence length.
+        device:            device for the Jacobian passes.
 
-        # 3. alignment Jacobian
-        seqs = build_latent_sequences(d["step1_all_latents"], seq_len)
-        aj = compute_spectral_norms(alignment_decoder, seqs, device)
-
-        # 4. encoder Jacobian
-        ej = compute_encoder_spectral_norms(step1_model, d["windows"], s, device)
-
-        for name, v in zip(SIGNALS, (ent, var, aj, ej), strict=True):
-            assert len(v) == n, (
-                f"{s}: signal {name!r} has {len(v)} values for {n} windows"
-            )
-        d["signals"] = np.column_stack([ent, var, aj, ej]).astype(np.float64)
+    Returns:
+        (len(idx), 4) float64 array.
+    """
+    p = probs[idx].astype(np.float64)
+    # Shannon entropy in nats; the clip keeps log(0) out while 0 * log(0) stays 0.
+    ent = -(p * np.log(np.clip(p, 1e-10, 1.0))).sum(axis=1)
+    var = np.exp(logvar[idx].astype(np.float64)).mean(axis=1)
+    seqs = build_latent_sequences(latents, seq_len)[idx]
+    aj = compute_spectral_norms(alignment_decoder, seqs, device)
+    ej = compute_encoder_spectral_norms(step1_model, windows[idx], session, device)
+    return np.column_stack([ent, var, aj, ej]).astype(np.float64)
 
 
 @dataclass(frozen=True)
 class SignalStats:
-    """Per-signal centering/scaling, fitted once on a reference block and then frozen."""
+    """Per-signal centering/scaling, fitted once on a reference block and then frozen.
+
+    Attributes:
+        mean: (n_signals,) per-signal mean.
+        std:  (n_signals,) per-signal standard deviation, plus a small epsilon.
+    """
 
     mean: np.ndarray
     std: np.ndarray
@@ -81,6 +94,9 @@ class SignalStats:
         Args:
             signals: (n, n_signals) raw signal matrix in ``SIGNALS`` column order.
 
+        Returns:
+            The frozen statistics.
+
         Raises:
             ValueError: if ``signals`` is not 2-D.
         """
@@ -91,7 +107,18 @@ class SignalStats:
 
 
 def standardize_signals(signals: np.ndarray, stats: SignalStats) -> np.ndarray:
-    """Apply a frozen SignalStats map to a signal matrix -> (n, n_signals) float64."""
+    """Apply a frozen SignalStats map to a signal matrix.
+
+    Args:
+        signals: (n, n_signals) raw signals in ``SIGNALS`` column order.
+        stats:   statistics fitted by ``SignalStats.fit``.
+
+    Returns:
+        (n, n_signals) float64 standardized signals.
+
+    Raises:
+        ValueError: if ``signals`` is not 2-D or its signal count differs from ``stats``.
+    """
     s = np.asarray(signals, dtype=np.float64)
     if s.ndim != 2 or s.shape[1] != stats.mean.shape[0]:
         raise ValueError(

@@ -18,7 +18,7 @@ RECON_WEIGHT = 1.0
 """Poisson NLL reconstruction weight."""
 
 KL_WEIGHT = 0.1
-"""KL divergence weight. A ``train_step1`` fallback only: the pooled pipeline passes
+"""KL divergence weight. A ``train_step1`` fallback only: the session chain passes
 ``STEP1_KL_WEIGHT`` from ``utils/production_config.py``."""
 
 KL_WARMUP_EPOCHS = 10
@@ -27,7 +27,7 @@ once the ramp is done, since validation losses under a changing KL weight are no
 
 REGION_WEIGHT = 1.0
 """Region classification CrossEntropy weight. A ``train_step1`` fallback only: the
-pooled pipeline passes ``STEP1_REGION_WEIGHT`` from ``utils/production_config.py``."""
+session chain passes ``STEP1_REGION_WEIGHT`` from ``utils/production_config.py``."""
 
 # Step 2 (Transformer alignment)
 TEMPERATURE = 0.1

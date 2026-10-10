@@ -1,4 +1,8 @@
-"""Session discovery and grouping utilities."""
+"""Session discovery and grouping utilities.
+
+Per-mouse primitives over the ``subjects``, ``dates`` and ``trials`` collections;
+``cohort.discover_cohort`` pools their results across mice.
+"""
 
 import re
 
@@ -7,7 +11,14 @@ from ..data.hybrid_io import get_session_neuron_ids
 
 
 def get_all_mice(db) -> list[int]:
-    """Return all mouse IDs recorded in the subjects collection."""
+    """Return all mouse IDs recorded in the subjects collection.
+
+    Args:
+        db (Database): pymongo Database.
+
+    Returns:
+        The ``mouse_id`` of every subject that has one, in collection order.
+    """
     subjects = list(db["subjects"].find({}))
     return [s["mouse_id"] for s in subjects if "mouse_id" in s]
 
@@ -15,12 +26,19 @@ def get_all_mice(db) -> list[int]:
 def get_contexts_for_mouse(db, mouse_id: int) -> dict[str, list[str]]:
     """Return {paradigm: [session_names]} for all sessions belonging to mouse_id.
 
-    A session is included only if:
-      - the dates document has a matching pos_path (M<id>_<YYMMDD> format)
-      - at least one trial exists for that date
-      - at least one neural data file exists for that trial
+    A session is included only if all of these hold:
 
-    Returns a dict keyed by paradigm string, with sorted deduplicated session lists.
+    - the dates document has a matching ``pos_path`` (``M<id>_<YYMMDD>`` format);
+    - at least one trial exists for that date;
+    - at least one neural data file exists for that trial.
+
+    Args:
+        db (Database): pymongo Database.
+        mouse_id:      the mouse's numeric id.
+
+    Returns:
+        A dict keyed by paradigm string (``"Unknown"`` when a date has none), with sorted,
+        deduplicated session lists. Empty if the mouse is not in ``subjects``.
     """
     subject = db["subjects"].find_one({"mouse_id": mouse_id})
     if not subject:
@@ -65,19 +83,23 @@ def resolve_paradigm(
     A session is valid when it has at least ``min_neurons`` curated units. A
     paradigm is eligible when it has at least two valid sessions.
 
-    Shared by ``analyses/per_maze.ipynb`` (called once per mouse being pooled into
-    the cohort, to decide which of that mouse's sessions enter the pool) and
-    ``analyses/run_mazes.py`` (which needs the paradigm up-front to build the
-    artifact path).
+    ``discover_cohort`` calls this once per mouse and pooled paradigm, to decide which
+    of that mouse's sessions enter the pool.
+
+    Args:
+        db (Database):   pymongo Database.
+        mouse_id:        the mouse's numeric id.
+        target_paradigm: the paradigm to consider; empty considers every paradigm of
+                         the mouse and picks the one with the most valid sessions.
+        min_neurons:     minimum units for a valid session (None =
+                         ``MIN_NEURONS_PER_SESSION``).
 
     Returns:
         (paradigm, valid_sessions): sessions sorted, length >= 2.
 
     Raises:
-        RuntimeError: if the mouse has no sessions, or no eligible paradigm. A
-            mouse that raises here contributes nothing to the pool and is
-            reported as a per-maze failure by ``run_mazes.py``, which does not
-            abort the rest of a multi-maze batch.
+        RuntimeError: if the mouse has no sessions, or no eligible paradigm.
+            ``discover_cohort`` catches it and records the mouse as skipped.
     """
     if min_neurons is None:
         min_neurons = MIN_NEURONS_PER_SESSION

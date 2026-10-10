@@ -1,16 +1,19 @@
 \documentclass{article}
 
-% NeurIPS 2026 style (official author kit: neurips_2026.sty, checklist.tex).
+% NeurIPS 2026 style (official author kit: neurips_2026.sty).
 %   \usepackage{neurips_2026}            anonymous submission (Main Track): line numbers, no authors
 %   \usepackage[preprint]{neurips_2026}  non-anonymous preprint, e.g. arXiv
 %   \usepackage[main, final]{neurips_2026}  camera-ready, only after acceptance
 % natbib is loaded by the style; pass its options before loading it.
 \PassOptionsToPackage{numbers,compress}{natbib}
-\usepackage{neurips_2026}
+\usepackage[preprint]{neurips_2026}
 
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
+\usepackage{algorithm}
+\usepackage[noend]{algpseudocode}
 \usepackage[hidelinks]{hyperref}
+\hypersetup{pdftitle={Keeping Neural Decoders Calibrated Session by Session with Learned Class-Conditional Conformal Prediction}}
 \usepackage{url}
 \usepackage{booktabs}
 \usepackage{amsmath,amssymb}
@@ -20,6 +23,7 @@
 \usepackage{graphicx}
 \graphicspath{{figures/}}
 \usepackage{enumitem}
+\usepackage{placeins}
 
 \usepackage{tikz}
 \usetikzlibrary{shapes.geometric,arrows.meta,positioning,fit,calc,backgrounds}
@@ -29,95 +33,130 @@
 \newdimen\testwidth
 \newdimen\barx
 \newdimen\bary
-\newdimen\sigx
-\newdimen\sigy
 
-\title{Uncertainty-Aware Machine Learning for Long-Term Neural Recordings in Flexible Brain-Computer Interfaces}
+\title{Keeping Neural Decoders Calibrated\\ Session by Session with Learned\\ Class-Conditional Conformal Prediction}
 
 \author{%
-  Guilherme Grancho Duarte Fernandes \\
-  Imperial College London \\
-  \texttt{guilherme.fernandes25@imperial.ac.uk} \\
+  Guilherme Grancho Duarte Fernandes$^{1}$ \quad
+  Hao Shen$^{1}$ \quad
+  Tianshu Tan$^{1}$ \\
+  \textbf{Tom Davison}$^{2}$ \quad
+  \textbf{Jia Liu}$^{1}$ \\
+  $^{1}$John A.\ Paulson School of Engineering and Applied Sciences, Harvard University \\
+  $^{2}$Imperial College London \\
+  \texttt{guilherme\_granchoduartefernandes@seas.harvard.edu}, \texttt{hshen@g.harvard.edu}, \\
+  \texttt{tianshu@seas.harvard.edu}, \texttt{thomas.davison@imperial.ac.uk}, \\
+  \texttt{jia\_liu@seas.harvard.edu} \\
 }
 
+% No funding is disclosed, so the acknowledgments heading omits "Disclosure of Funding".
+\renewcommand{\acksection}{\section*{Acknowledgments}}
+% No "Preprint." notice at the bottom of the first page.
+\makeatletter
+\renewcommand{\@notice}{}
+\makeatother
 \begin{document}
 
 \maketitle
 
 \begin{abstract}
-A major challenge for the lasting reliability of brain-computer interfaces in real world conditions is neural drift, which degrades decoder performance and makes them unreliable over time. To evaluate the decline in accuracy, it's necessary to have recent labeled data, which is expensive and impractical in real life settings. This paper studies a learned class-conditional split-conformal layer to measure uncertainty in neural decoding models, without requiring new labeled data. A behavior-constrained variational autoencoder and a Transformer alignment decoder predict the maze region occupied by a mouse, then the conformal layer outputs a trust region of plausible maze regions. The approach was tested using electrophysiological data from flexible brain probes in 13 mice as they went through 3 virtual-reality mazes. For a targeted 90\% trust region accuracy, the method achieved 81.4\% to 86.5\% test accuracy when constructing trust regions that included the true maze region. The trust region size correlated positively with decoder error in two of the three mazes and negatively in the third. These results show that the proposed model gives a signal for decoding uncertainty, which is promising for long-term reliability in brain-computer interfaces. Nevertheless, a more thorough comparison with different methods and additional decoding models is necessary before broad implementation.
+A major challenge for the lasting reliability of brain--computer interfaces in real-world conditions is neural drift, which degrades decoder performance and makes decoders unreliable over time. At inference time the decoder's predictions arrive without labels, so that decline cannot be measured. This paper proposes a learned class-conditional split-conformal layer that is calibrated on labeled data recorded before inference and then, without labels, turns each decoder output into a prediction set of plausible labels. A small network learns a per-input scale of the conformal score from four label-free uncertainty signals read from the latent space and the decoder, and one threshold is calibrated per class, borrowing calibration data from recent sessions for rare classes. The layer is deployed in a session-by-session chain that carries a behavior-constrained variational autoencoder and a Transformer decoder across recording sessions. On 149 sessions from 13 mice implanted with flexible probes in 3 virtual-reality mazes, over 5 seeds, the layer reached 86.0\%, 85.9\% and 90.1\% coverage at a 90\% target, against 76.8\%, 70.0\% and 88.1\% for standard split-conformal prediction on a model trained per session. The size of each conformal prediction set then serves as a label-free measure of the decoder's reliability at inference time.
 \end{abstract}
 
 \section{Introduction}
-Brain-computer interfaces (BCIs) predict behavior from neural activity using encoding-decoding pipelines~\cite{dong2023a}. In neural recordings, movements at the electrode and tissue point of contact, changes in the recorded neural population~\cite{tang2023a,vanbeest2025}, and alterations in neural representation~\cite{deitch2021,rule2019a} can modify the relationship between the neural activity and the predicted variable over time, causing neural drift. While alignment methods~\cite{karpowicz2025a,degenhart2020a} can improve decoder stability, they primarily improve accuracy. These methods do not measure the model uncertainty. Therefore, long-term neural decoding for real life BCI deployment needs not only accuracy, but also a trustworthy uncertainty signal that can be evaluated over time.
+Brain--computer interfaces (BCIs) predict behavior from neural activity using encoding-decoding pipelines~\cite{dong2023a}. In neural recordings, movements at the electrode and tissue point of contact, changes in the recorded neural population~\cite{tang2023a,vanbeest2025}, and alterations in neural representation~\cite{deitch2021,rule2019a} can modify the relationship between the neural activity and the predicted variable over time, causing neural drift. Alignment methods~\cite{karpowicz2025a,degenhart2020a}, which map later recordings back onto the representation a decoder was trained on, can improve decoder stability, but they aim at accuracy and do not measure the model's uncertainty. Therefore, long-term neural decoding for real-life BCI deployment needs not only accuracy, but also a trustworthy uncertainty signal that can be evaluated at inference time, when no labels are available.
 
-To assess an encoder-decoder's reliability, it is necessary to measure its performance on recently labeled data~\cite{karpowicz2024a}. However, obtaining labels at the point of use is impractical, and continuously retraining the entire model may not be feasible~\cite{fan2023a}.  This creates a gap between encoding-decoding accuracy measured during development and the reliability required during deployment~\cite{ovadia2019a}. Rather than trying to correct neural drift, this work aims to determine whether an uncertainty calibration method can show when decoder predictions become less reliable, without requiring new labeled data.
+The reliability of an encoder-decoder is usually measured offline, from its performance on labeled data~\cite{karpowicz2024a}. At inference time, however, the decoder's predictions arrive without labels, so its reliability cannot be measured while it is in use, and continuously retraining the entire model may not be feasible~\cite{fan2023a}. This creates a gap between the encoding-decoding accuracy measured during development and the reliability required during deployment~\cite{ovadia2019a}. Rather than trying to correct neural drift, this work addresses reliability at inference time. Labeled data are used only before inference, to calibrate an uncertainty method on data recorded earlier in a session, as in the calibration phase at the start of a BCI session. The question is whether the calibrated method can then show, without any labels, when the decoder's later predictions in that session become less reliable.
 
-This paper proposes a learned class-conditional split-conformal layer added after the encoding-decoding pipeline~\cite{angelopoulos2022a}. For each neural input, after the decoder prediction, the conformal layer outputs a trust region set for that prediction. To create this, the conformal method targets a specific accuracy level for the trust region to contain the ground-truth, the target conformal level. The size of this trust set quantifies the trust region sharpness. As the trust region widens, its sharpness decreases, reflecting increased uncertainty in the encoding-decoding pipeline. Because calibration and test data may be impacted by neural drift, the central question is whether the calibrated conformal layer maintains a good coverage level and sharpness in the test data.
+This paper proposes a learned class-conditional split-conformal layer added after the encoding-decoding pipeline~\cite{angelopoulos2022a}. Split-conformal prediction turns the output of a trained classifier into a prediction set, a set of labels that contains the true label with a chosen probability, the target coverage, such as 90\%. It scores how implausible each label is for an input, here one minus the probability the decoder gives to that label, and uses a held-out block of labeled calibration data to choose the score threshold below which a label enters the set. A confident and correct decoder then produces small sets, often a single label, while an uncertain input produces a larger set, so the size of the set, or its sharpness, shows how much a prediction can be trusted. The proposed layer adds two components to this standard method. First, the score of each input is divided by a scale that a small neural network learns from four label-free uncertainty signals of the latent space and the decoder, so that inputs the pipeline treats as uncertain receive larger sets. Second, one threshold is calibrated per class, here per maze region, so that rare regions keep their coverage, and regions with too little calibration data in a session borrow it from the most recent sessions.
 
-The presented method is studied using an existing encoding-decoding model that uses a behavior-constrained variational autoencoder (BC-VAE)~\cite{kingma2022a,pandarinath2018a} followed by a Transformer alignment decoder. This workflow maps neural electrophysiological data collected via a flexible brain probe~\cite{tang2023a,zhao2024} implanted in 13 mice who navigate 3 virtual-reality mazes to a prediction of which maze region the mouse is in. For each decoder’s output, the conformal layer is assessed as a reliability tool that creates a set of plausible maze regions, the trust region set, for a targeted conformal level.
+The layer is studied on an encoding-decoding model that uses a behavior-constrained variational autoencoder (BC-VAE)~\cite{kingma2022a,pandarinath2018a}, which compresses each short window of neural activity into a low-dimensional latent representation, followed by a Transformer alignment decoder, which reads a short sequence of these representations and predicts the maze region. This workflow maps neural electrophysiological data collected via a flexible brain probe~\cite{tang2023a,zhao2024} implanted in 13 mice who navigate 3 virtual-reality mazes to a prediction of which maze region the mouse is in. To mimic deployment, the pipeline and the conformal layer are carried from one recording session to the next in calendar order, in what this paper calls a session-by-session chain. They are fine-tuned and recalibrated on the labeled first part of each new session, and then run without labels on the remainder of that session, which they have never seen. The labels of this remainder are used only to measure coverage. Because calibration and test data may be impacted by neural drift, the central question is whether the calibrated layer keeps its coverage on these later data, and whether the size of its prediction sets tracks the errors of the decoder.
 
-The rest of the paper first gives extra context on long-term neural decoding and conformal uncertainty calibration. It then explains the experimental protocol, defines the conformal model, analyses the conformal performance, and discusses the limitations and implications of the proposed approach for BCI applications.
+The contribution of this paper is a learned class-conditional split-conformal layer whose scale is learned from label-free signals of the latent space and the decoder, used to measure the reliability of neural decoders at inference time and evaluated across recording sessions against standard split-conformal prediction.
+
+The rest of the paper first gives extra context on long-term neural decoding and conformal uncertainty calibration. It then explains the experimental protocol, defines the conformal layer, analyzes its performance, and discusses the limitations and implications of the proposed approach for BCI applications. The appendix gives the full mathematical and implementation details.
 
 \section{Related Work}
 
 \subsection{Changes in neural recordings}
-Both recording instability and representational drift can degrade neural encoding and decoding. Recording instability affects which neural signals are collected and how. This might happen due to brain probe movement~\cite{tang2023a,steinmetz2021} and neural tissue response to the probe. Flexible probes, like those used in this study, can help reduce the physical mismatch between the sensor and the neural tissue, but they do not prevent representational drift. Because representational drift is a biological phenomenon that alters the relationship between the received information and the neural activity, meaning that the same stimulus can start being encoded in a different form in the brain as time advances~\cite{deitch2021,rule2019a}. Recording instability and representational drift can occur together, and it's almost unfeasible to distinguish their influence in the neural recordings. Therefore, in this paper, the term neural drift is used to refer to their combined effect.
+Both recording instability and representational drift can degrade neural encoding and decoding. Recording instability affects which neural signals are collected and how. This might happen due to brain probe movement~\cite{tang2023a,steinmetz2021} and neural tissue response to the probe. Motion correction~\cite{windolf2025,garcia2024} and the tracking of single units across days~\cite{vanbeest2025,yuan2024} reduce it but do not remove it. Flexible probes, like those used in this study, reduce the physical mismatch between the sensor and the neural tissue and support decoding across days and weeks~\cite{tang2023a,tian2026}, but they do not prevent representational drift. Representational drift is a biological phenomenon that alters the relationship between the received information and the neural activity, so that the same stimulus or behavior is encoded in a different form as time advances~\cite{deitch2021,rule2019a,driscoll2022}. In the hippocampus, elapsed time and accumulated experience affect different aspects of it~\cite{geva2023}. Recording instability and representational drift can occur together, and it is almost unfeasible to distinguish their influence in the neural recordings, although flexible probes that follow the same neurons over months have been used to measure and realign drift in the mouse visual cortex~\cite{zhao2024}. In this paper, the term neural drift is used to refer to their combined effect.
 
-\subsection{Alignment methods for decoding}
-Alignment methods address neural drift by trying to preserve decoder accuracy. In order to do that, these techniques map neural activity from later recordings into a latent space representation compatible with the one the encoder has previously learned~\cite {karpowicz2025a,degenhart2020a}. This approach matters because it shows that useful decoding remains possible under neural drift and motivates the Transformer alignment decoder used in this paper. However, sustaining accuracy and reporting reliability are different problems. A decoder may still return a seemingly confident prediction even as its uncertainty increases, so an additional calibration layer is needed to determine when the prediction should be interpreted as unreliable~\cite{guo2017a,weiWeiGanChao2024}.
+\subsection{Long-term neural decoding}
+Alignment methods address neural drift by trying to preserve decoder accuracy. They map neural activity from later recordings into a latent space compatible with the one the decoder has previously learned, through the alignment of low-dimensional manifolds~\cite{degenhart2020a}, adversarial domain adaptation~\cite{farshchian2019,ma2023,jude2022}, or the alignment of latent dynamics~\cite{karpowicz2025a}, building on the observation that latent dynamics are preserved across days and even across animals performing the same behavior~\cite{safaie2023}. Other approaches recalibrate the decoder continually from pseudo-labels~\cite{fan2023a}, and the FALCON benchmark compares such few-shot and unsupervised adaptation methods across sessions~\cite{karpowicz2024a}. In parallel, latent variable models of population activity~\cite{pandarinath2018a,keshtkaran2022} and large models pretrained across sessions, animals and tasks~\cite{schneider2023a,azabou2023,azabou2025,ye2023,zhang2024,zhang2025} learn representations that transfer to new sessions with little data. These works show that useful decoding remains possible under neural drift, and they motivate the session-specific input layers and the Transformer alignment decoder used in this paper. A decoder that is fine-tuned on each new session without replaying earlier ones, as here, is also exposed to catastrophic forgetting~\cite{kirkpatrick2017}. However, sustaining accuracy and reporting reliability are different problems, and none of these methods states, for a single prediction, how much it should be trusted.
+
+\subsection{Uncertainty in neural decoding}
+Uncertainty calibration methods assess whether a model's confidence is correctly reflected in its predictions. Modern neural networks are often overconfident~\cite{guo2017a}, and their calibration degrades further under dataset shift~\cite{ovadia2019a}, which is the regime of long-term neural recordings. Deep ensembles~\cite{lakshminarayanan2017a} and Monte Carlo dropout~\cite{gal2016} estimate predictive uncertainty at the cost of several forward passes, and the posterior of Bayesian neural decoders can itself be miscalibrated~\cite{weiWeiGanChao2024}. A decoder may therefore return a seemingly confident prediction even as its uncertainty increases, so an additional calibration layer is needed to determine, at inference time, when a prediction should be interpreted as unreliable. Conformal prediction has recently been applied to neural decoding with hyperdimensional computing models~\cite{liang2026a}, but not, to our knowledge, to a decoder carried across recording sessions.
 
 \subsection{Conformal classification}
-Uncertainty calibration methods assess whether the model's confidence is correctly reflected in its predictions. One version of these methods is conformal classification, which converts predictions into scores~\cite{angelopoulos2022a,liang2026a}. Those scores then create a trust region that aims to contain the true data label a certain percentage of the time, the targeted coverage level. Therefore, conformal performance is measured by coverage and sharpness. Coverage quantifies how often the trust region contains the true label. Sharpness reflects the trust region's narrowness. In classification tasks on imbalanced datasets, conformal methods can perform poorly for rare classes in the dataset, motivating the class-conditional conformal approach used in this paper, fully described in Section~\ref{sec:class-conditional}.
+Conformal classification converts the outputs of any classifier into prediction sets that contain the true label with a chosen probability, the target coverage, under the sole assumption that calibration and test data are exchangeable, meaning that their joint distribution does not change when their order is shuffled, as for independent draws from the same distribution~\cite{angelopoulos2022a}. Its performance is measured by coverage, how often the prediction set contains the true label, and sharpness, how small the set is. The base score $1-\hat p_y(x)$ used here minimizes the expected set size at a given coverage when the model probabilities are correct~\cite{sadinle2019}, while adaptive scores trade some sharpness for better conditional behavior~\cite{romano2020}. On imbalanced datasets, a single threshold reaches its target on average while under-covering rare classes. Class-conditional (Mondrian) thresholds restore coverage per class~\cite{vovk2012,sadinle2019}, at the cost of data hunger for rare classes, which can be addressed by clustering classes with similar score distributions~\cite{ding2023}. The borrowing rule of this paper addresses the same problem along time, by pooling a rare class's calibration data with that of the most recent sessions. Scaling the score by an input-dependent difficulty estimate makes the sets adapt to each input~\cite{lei2018}, and conformal training learns model parameters through a differentiable relaxation of the prediction-set construction~\cite{stutz2022}. The proposed layer learns only such a scale, from label-free signals of the pipeline, leaving the decoder untouched.
 
-The reliability of conformal methods depends on the relationship between the calibration and test data. This is especially important in long-term neural recordings, where neural drift can cause later test data points to mean something else from earlier calibration ones. So, an evaluation method that tries to simulate a deployment scenario should therefore split calibration data from test data, using a split-conformal methodology~\cite{angelopoulos2022a}. Finally, by combining the class-conditional and split-conformal approaches,  the proposed solution is created, a class-conditional split-conformal layer for BCI applications to quantitatively assess the impact of neural drift.
+The reliability of conformal methods depends on the relationship between the calibration and test data. Under covariate shift, calibration scores can be reweighted by a known likelihood ratio~\cite{tibshirani2019}, and when exchangeability fails in unknown ways, the coverage gap can be bounded by the shift between calibration and test~\cite{barber2023}. Adaptive and online conformal methods update the threshold after every prediction from its observed coverage~\cite{gibbs2021,zaffran2022,bhatnagar2023}, which needs the true label of each test input shortly after the prediction. In a deployed BCI, labels are not available at inference time. The proposed layer therefore uses labels only before inference. It is recalibrated once per recording session, from that session's own labeled calibration block, and then runs without labels on later data of the same session, which is the setting a split-conformal evaluation of deployment should reproduce.
 
 \section{Experimental Setup}
 
 \subsection{Data collection}
-The dataset used in this paper is from extracellular neural spike recordings from the visual and motor cortices, detecting the electrical activity of neurons outside the cell membrane. These were collected using flexible brain probes implanted in 13 mice as they went through 3 different virtual reality mazes: the Linear Maze, the Y Maze, and the Loop Maze. In this setup, the mice faced 6 monitors and explored the mazes using an omnidirectional ball connected to the virtual environments, receiving water through a robotic arm as a reward when they reached maze checkpoints (Figure~\ref{fig:data-input}). The maze configurations stayed consistent across recording sessions. However, the recorded neural population activity could change over time due to neural drift.
+The dataset consists of extracellular spike recordings, which detect the electrical activity of neurons from outside the cell membrane, targeting the hippocampal CA1 region, the medial entorhinal cortex and the primary visual cortex. These were collected using flexible brain probes implanted in 13 mice as they went through 3 different virtual-reality mazes: the Linear Maze, the Y Maze, and the Loop Maze. In this setup, the mice faced 6 monitors and explored the mazes using an omnidirectional ball connected to the virtual environments, receiving water through a robotic arm as a reward when they reached maze checkpoints (Figure~\ref{fig:data-input}). A recording session is one continuous recording of one mouse in one maze. Within a session, the mouse runs through the maze repeatedly, and each run is a trial. A trial that ends with the water reward is a task trial, while the others were aborted or ended without a reward. The maze configurations stayed consistent across recording sessions. However, the recorded neural population activity could change over time due to neural drift.
 
-For each tracked neuron, the number of electrophysiological spike impulses that occurred in the last 100 ms is recorded, creating firing-rate bins expressed in Hertz at a 100 ms resolution. The firing-rate bins are then grouped into windows of 10 bins, also called spike-count windows. Providing the encoder with 1 s interval information over all recorded neurons for each input spike-count window. Each input is labeled with the maze region the mouse occupies at that time, producing the classification task for the decoder. Figure~\ref{fig:data-input} shows the data collection setup and a session’s data example.
+For each recorded neuron, the spikes are counted in consecutive 100 ms bins and converted to firing rates in hertz. Ten consecutive bins form one non-overlapping input window, called a spike-count window, so each input gives the encoder 1 s of activity of all recorded neurons of the session. Each neuron is z-scored with the mean and standard deviation of its session's training block (Section~\ref{sec:task}). Each input is labeled with the maze region the mouse occupies at that time, producing the classification task for the decoder. Figure~\ref{fig:data-input} shows the data collection setup and a session's data example.
 
-\begin{figure}[t]
+\begin{figure}[ht]
   \centering
   \includegraphics[width=0.45\linewidth]{set_up.jpeg}
   \hfill
   \includegraphics[width=0.47\linewidth]{encoder-input-example.png}
-  \caption{Data collection and neural input. Left: Photograph of the Liu Lab's setup, which includes a mouse mounted on an omnidirectional ball, 6 monitors showing the maze environment, a flexible brain probe implanted in the animal, and an automated water delivery system. Right: The first 30 seconds of a Linear Maze session from Mouse 19 on 2024-09-18. The highlighted region corresponds to a 1 s interval input for the BC-VAE.}
+  \caption{Data collection and neural input. Left: Photograph of the experimental setup, which includes a mouse mounted on an omnidirectional ball, 6 monitors showing the maze environment, a flexible brain probe implanted in the animal, and an automated water delivery system. Right: Firing rates over 30 seconds of the first trial of a Linear Maze session, from the trial's first spike. The highlighted region corresponds to a 1 s interval input for the BC-VAE.}
   \label{fig:data-input}
 \end{figure}
 
-\subsection{Classification Task}
-The dataset for each maze is created by aggregating the sessions for every mouse. Recording sessions with only one maze region label are removed to exclude failed sessions. The final dataset includes, for the Linear Maze, 13 mice and 95 sessions, for the Y Maze, 7 mice and 23 sessions, and for the Loop Maze, 2 mice and 14 sessions. Each session was split chronologically. The first 80\% of each session is combined across all sessions to create the training set. The next 10\% of each session is combined across all sessions to create the validation set, also used for the final calibration of the conformal layer. And the final 10\% of each session is combined across all sessions to create the test set.
+\subsection{Classification task}
+\label{sec:task}
+The dataset of each maze contains every usable session of every mouse recorded in that maze. A mouse is included if it has at least 2 sessions with at least 5 recorded neurons in the maze. A session is used if it has usable behavioral and neural data, at least 5 recorded neurons, at least 20 task windows covering at least 2 maze regions and, after the split described below, at least 50 calibration and 20 test windows (Appendix~\ref{app:data}). A small number of sessions with recording failures were excluded by hand (9 Linear Maze, 2 Y Maze and 2 Loop Maze sessions). The final dataset has 13 mice and 102 sessions for the Linear Maze, 7 mice and 28 sessions for the Y Maze, and 3 mice and 19 sessions for the Loop Maze (149 sessions from 13 mice in total).
 
-For each maze, $\mathcal{Y}=\{1,\ldots,K\}$ is the set of possible maze region labels, illustrated in Figure~\ref{fig:maze-region}. Each neural input $x$ is labeled with a maze region $y\in\mathcal{Y}$. The encoder-decoder pipeline outputs region probabilities $\hat p_k(x)$ and the top prediction $\hat y(x)$. Afterwards, for each decoder prediction, the conformal layer creates a trust region set $\widehat{\mathcal{C}}(x)\subseteq\mathcal{Y}$. The conformal performance is evaluated by coverage and sharpness. Coverage is the frequency with which $y$ is inside $\widehat{\mathcal{C}}(x)$. Sharpness is the trust region size relative to the total number of maze regions, $|\widehat{\mathcal{C}}|/K$.
+Only windows recorded during task trials are used. Each 100 ms bin is assigned the maze region at the mouse's position, and a window whose 10 bins do not all lie in the same region straddles a region boundary and is dropped. Figure~\ref{fig:maze-region} shows the regions of each maze, and Appendix~\ref{app:data} details how the bins are assigned to them.
 
-\begin{figure}[t]
+\begin{figure}[ht]
   \centering
   \includegraphics[width=0.99\linewidth]{maze-geometry.png}
-  \caption{This schematic shows the 3 maze layouts with discrete region labels. The black dot marks the start of the trial.}
+  \caption{The 3 maze layouts and their region labels. The black dot marks the start of a trial. The Linear Maze regions are defined relative to the reward position of each trial (Appendix~\ref{app:data}).}
   \label{fig:maze-region}
 \end{figure}
 
+Each session is split chronologically into three contiguous blocks of task windows: the first 60\% is the training block, the next 30\% the calibration block, and the final 10\% the test block. Splitting by time, rather than at random, means that the model is always tested on data recorded after the data it was trained and calibrated on, as it would be in use. The calibration block is used both for early stopping and for the conformal thresholds. The first sessions of each maze are a warm-up that is trained but never tested (Section~\ref{sec:chain}). Their windows are split 70\% training and 30\% calibration, with no test block.
+
+For each maze, $\mathcal{Y}=\{0,\ldots,K-1\}$ is the set of possible maze region labels, illustrated in Figure~\ref{fig:maze-region}. Each neural input $x$ is labeled with a maze region $y\in\mathcal{Y}$. The encoder-decoder pipeline outputs region probabilities $\hat p_k(x)$ and the top prediction $\hat y(x)$. Afterwards, for each decoder prediction, the conformal layer creates a prediction set $\widehat{\mathcal{C}}(x)\subseteq\mathcal{Y}$. The conformal performance is evaluated by coverage and sharpness. Coverage is the frequency with which $y$ is inside $\widehat{\mathcal{C}}(x)$. Sharpness is measured by the prediction set size relative to the total number of maze regions, $|\widehat{\mathcal{C}}|/K$, a smaller set being sharper.
+
 \subsection{Encoding-decoding pipeline}
-The encoding-decoding workflow consists of a BC-VAE followed by a Transformer alignment decoder. For each spike-count input window, the BC-VAE produces a latent space represented by a mean and a variance. The Transformer processes a sequence of 5 latent means from the BC-VAE and outputs a probability distribution over the maze regions, from which the top probability is the final decoder prediction. The conformal layer studied in this paper is applied after this decoder. Decoder accuracy is therefore reported as extra context for the conformal analysis, while the main focus is the coverage and sharpness of the proposed conformal approach.
+The encoding-decoding workflow consists of a BC-VAE followed by a Transformer alignment decoder. For each spike-count input window, the BC-VAE produces a Gaussian latent distribution described by a mean and a variance. The Transformer processes a sequence of 5 latent means from the BC-VAE and outputs a probability distribution over the maze regions, whose most probable region is the final decoder prediction. The conformal layer proposed in this paper is applied after this decoder. Decoder accuracy is therefore reported as context for the conformal analysis, while the main focus is the coverage and sharpness of the proposed conformal approach.
+
+Because neuron identities are not shared across sessions and mice, each session has its own input projection into the encoder and its own read-out from the generator (Appendix~\ref{app:pipeline}), created when the session enters the chain (Section~\ref{sec:chain}). The rest of the encoder and the whole decoder are shared and carried from session to session. Creating a session's layers only when it arrives guarantees that nothing learned for an earlier session depends on a later one.
 
 \subsubsection{BC-VAE}
-The BC-VAE is initialized with a Gaussian prior latent space with 16 dimensions $\mathcal{N}(0,I)$~\cite{kingma2022a}. As spike-count windows $x$ start being inputted, the encoder maps them into the posterior latent space $z$ parameterized by a posterior mean vector $\mu(x)\in\mathbb{R}^{16}$ and a posterior variance vector $\sigma^2(x)\in\mathbb{R}^{16}$. In the implementation, the encoder outputs the variance on a logarithmic scale, which is converted back to a regular scale when required. The model is trained to encode the spike counts~\cite{pandarinath2018a} in a posterior latent space that is regularized towards the normal prior $\mathcal{N}(0,I)$~\cite{higgins2017a}, while preserving the maze region information in the new latent representation. After training, $\mu(x)$ serves as the latent representation passed to the Transformer decoder, while $\sigma^2(x)$ is used as an uncertainty signal for the conformal layer.
+The BC-VAE is a variational autoencoder~\cite{kingma2022a} with a 16-dimensional latent space and a standard normal prior $\mathcal{N}(0,I)$. Its encoder maps each spike-count window $x$ to a Gaussian distribution over the latent variable $z$, with a posterior mean vector $\mu(x)\in\mathbb{R}^{16}$ and a posterior variance vector $\sigma^2(x)\in\mathbb{R}^{16}$, and its generator reconstructs the firing rates from $z$~\cite{pandarinath2018a}. During training, the posterior is pulled towards the prior~\cite{higgins2017a}, and a small classifier must also predict the maze region from $z$, which constrains the latent space to keep the behavioral information, hence the name behavior-constrained. After training, $\mu(x)$ serves as the latent representation passed to the Transformer decoder, while $\sigma^2(x)$ is used as an uncertainty signal for the conformal layer.
 
 \subsubsection{Transformer alignment decoder}
-As an alignment strategy to improve decoding performance, a Transformer alignment decoder processes a sequence of 5 consecutive BC-VAE posterior mean vectors $\mu(x)$. So, for a prediction at $t$, the input is $(\mu_{t-4},\ldots,\mu_t)$. If fewer than 5 vectors are available at the start of a session, the first mean vector is repeated as needed. During training, the model tries to align and closely represent the same maze region in the new aligned latent space across different sessions and animals~\cite{schneider2023a}, to gain generalizability across mice and sessions, while fighting neural drift. Finally, from the new latent representation, a softmax probability vector $\hat p(x)$ over the maze regions is inferred. The decoder’s final maze region prediction $\hat y(x)$ is the highest value in the probability vector $\hat p(x)$.
+The Transformer alignment decoder maps the BC-VAE latents into a new, aligned latent representation in which windows of the same maze region lie close together, and predicts the region from it. It processes a sequence of 5 consecutive BC-VAE posterior mean vectors $\mu(x)$, so that each prediction also uses the preceding 4 s of activity. So, for the window $x_i$ of a session, the input is $(\mu_{i-4},\ldots,\mu_i)$, with $\mu_i=\mu(x_i)$. If fewer than 5 vectors are available at the start of a session, the first mean vector is repeated as needed. During training, a contrastive objective pulls together the aligned latents of windows from the same maze region within a training batch~\cite{schneider2023a}, so that each region has a compact representation. Finally, from the new latent representation, a softmax probability vector $\hat p(x)$ over the maze regions is inferred. The decoder’s final maze region prediction $\hat y(x)$ is the region with the highest value in the probability vector $\hat p(x)$.
+
+\subsection{Session-by-session chain}
+\label{sec:chain}
+Each maze is processed as a single chain of sessions that mimics deployment, in which a decoder is carried from one recording session to the next and recalibrated on each new session. All sessions of the maze, from all mice, are sorted by recording date (ties broken by mouse) into $s_1,\ldots,s_T$. For session $s_t$, $\mathcal{D}^{\mathrm{tr}}_t$, $\mathcal{D}^{\mathrm{cal}}_t$ and $\mathcal{D}^{\mathrm{test}}_t$ denote its training, calibration and test blocks. The chain then proceeds as follows for $t=1,\ldots,T$:
+
+\begin{enumerate}[leftmargin=*,itemsep=1pt,topsep=2pt]
+  \item \textbf{Fine-tune.} The encoder, decoder and conformal scale of session $s_{t-1}$ are fine-tuned on $\mathcal{D}^{\mathrm{tr}}_t$, with early stopping on $\mathcal{D}^{\mathrm{cal}}_t$ and the best epoch restored. There is no replay of earlier sessions. The first session is trained from scratch.
+  \item \textbf{Calibrate.} The conformal thresholds of session $s_t$ are computed from $\mathcal{D}^{\mathrm{cal}}_t$, borrowing from the calibration blocks of the previous sessions only for regions with too few windows (Section~\ref{sec:class-conditional}).
+  \item \textbf{Test.} Prediction sets are computed on $\mathcal{D}^{\mathrm{test}}_t$, the remainder of the session, without their labels, which are used only to measure coverage.
+\end{enumerate}
+
+The first 3 sessions of each chain are a warm-up. They are trained and their calibration blocks can be borrowed from, but they are never tested, so every tested session starts from a model that has already been trained on earlier sessions. The tested sessions are 99 of the Linear Maze, 25 of the Y Maze and 16 of the Loop Maze. A tested session is the first session of its mouse if no earlier session of that mouse, warm-up included, entered the chain. Otherwise, the mouse is returning. Every quantity is computed from the model as it is right after fine-tuning on the tested session, so no session is ever evaluated with information from a later one. Algorithm~\ref{alg:chain} in Section~\ref{sec:conformal-loss} gives the full procedure once the conformal layer is defined.
 
 \subsection{Uncertainty signals}
 \label{sec:uncertainty-signals}
-To learn to quantify the system's uncertainty, the conformal layer receives 4 uncertainty signals per input: the BC-VAE posterior variance, the encoder Jacobian norm, the alignment Jacobian norm, and the predictive entropy.
+To learn to quantify the system's uncertainty, the conformal layer receives 4 uncertainty signals per input: the BC-VAE posterior variance, the encoder Jacobian norm, the alignment Jacobian norm, and the predictive entropy. Each describes a different stage of the pipeline. The posterior variance measures how uncertain the encoder is about the latent representation of an input, the two Jacobian norms measure how strongly the encoder and the decoder react to small changes of their input, and the predictive entropy measures how spread out the decoder's final probabilities are. All four are read from the encoding-decoding pipeline of the current session and none of them needs the true label, so they are available at inference time.
 
 \subsubsection{BC-VAE posterior variance}
-The BC-VAE posterior variance uncertainty signal reduces the encoder's variance vector output with 16 dimensions $\sigma^2(x)$, to a single scalar $\bar{\nu}$ for each spike-count window $x$. Considering that, $\sigma^2_j(x)$ is the scalar posterior variance assigned to the latent dimension $j$. The variance signal is the mean across all latent dimensions:
+The BC-VAE posterior variance uncertainty signal reduces the 16-dimensional variance vector $\sigma^2(x)$ of the encoder to a single scalar $\bar{\nu}(x)$ for each spike-count window $x$. With $\sigma^2_j(x)$ the posterior variance of latent dimension $j$, the variance signal is the mean across all latent dimensions:
 
 \begin{equation}
-  \bar{\nu}=\frac{1}{d}\sum_{j=1}^{d}\sigma_j^2(x), \qquad d=16.
+  \bar{\nu}(x)=\frac{1}{d}\sum_{j=1}^{d}\sigma_j^2(x), \qquad d=16.
 \end{equation}
 
 A larger mean posterior variance indicates that the encoder assigns higher uncertainty to the current spike-count window latent representation before Transformer decoding.
@@ -126,20 +165,20 @@ A larger mean posterior variance indicates that the encoder assigns higher uncer
 The encoder Jacobian norm measures the largest impact that perturbations on the input $x$ can have on the BC-VAE posterior mean output $\mu(x)$~\cite{barter2019a,miyato2018a}. For each window $x$, the signal is defined as the spectral norm of the derivative from the input window to the latent mean with 16 dimensions:
 
 \begin{equation}
-  \mathcal{J}^{\mathrm{enc}}
+  \mathcal{J}^{\mathrm{enc}}(x)
   =\left\lVert\frac{\partial \mu(x)}{\partial x}\right\rVert_2 .
 \end{equation}
 
-This scalar is the largest singular value, indicating the greatest encoder sensitivity. Larger values mean greater response to small input modifications.
+This scalar is the largest singular value, indicating the greatest encoder sensitivity (Appendix~\ref{app:signals} defines the Jacobian and its spectral norm and describes their computation). Larger values mean greater response to small input modifications.
 
 \subsubsection{Alignment Jacobian norm}
-The alignment Jacobian spectral norm measures sensitivity at the Transformer alignment stage~\cite{barter2019a,miyato2018a}. Considering that, $f$ is the Transformer model that receives a sequence of 5 BC-VAE posterior means to output the aligned latent representation. For window $x_t$, the signal measures the derivative of the aligned latent space with respect to the current latent mean $\mu(x_t)$:
+The alignment Jacobian spectral norm measures sensitivity at the Transformer alignment stage~\cite{barter2019a,miyato2018a}. With $F$ the Transformer model that receives a sequence of 5 BC-VAE posterior means and outputs the aligned latent representation $\tilde z$, for window $x_i$ the signal measures the derivative of the aligned latent representation with respect to the current latent mean $\mu(x_i)$:
 
 \begin{equation}
-  \mathcal{J}^{\mathrm{align}}_t
+  \mathcal{J}^{\mathrm{align}}(x_i)
   =\left\lVert
-  \frac{\partial f(\mu(x_{t-4}),\ldots,\mu(x_t))}
-  {\partial \mu(x_t)}
+  \frac{\partial F(\mu(x_{i-4}),\ldots,\mu(x_i))}
+  {\partial \mu(x_i)}
   \right\rVert_2 .
 \end{equation}
 
@@ -149,16 +188,20 @@ Like the encoder Jacobian, this value is the largest singular value of the deriv
 This signal is computed as the entropy of the decoder's softmax output $\hat p(x)$ over the $K$ maze regions~\cite{lakshminarayanan2017a}. This entropy summarizes the uncertainty of the full $\hat p(x)$ vector distribution over all possible $k$ labels:
 
 \begin{equation}
-  \mathcal{H}=-\sum_{k=1}^{K}\hat p_k(x)\log \hat p_k(x).
+  \mathcal{H}(x)=-\sum_{k\in\mathcal{Y}}\hat p_k(x)\log \hat p_k(x).
 \end{equation}
 
 Entropy is zero when all probability is assigned to one region and is the largest for a uniform distribution over all regions. It therefore captures global ambiguity in the decoder output.
 
 \subsection{Learned class-conditional split-conformal layer}
-The learned class-conditional split-conformal layer is applied after training the encoding-decoding pipeline. It uses the 4 uncertainty signals from Section~\ref{sec:uncertainty-signals} to learn a positive scale factor that indirectly adjusts the trust region size to achieve a targeted coverage level.
+The proposed layer sits after the encoding-decoding pipeline and does not change its predictions. It has four parts, described in turn below. A learned scale measures how uncertain each input is, a scaled score measures how implausible each region is for that input, one threshold per region decides which scores are low enough, and the prediction set collects the regions that pass. Each region separately targets the coverage level $1-\alpha$, where $\alpha\in(0,1)$ is the allowed miscoverage rate. In the chain, the layer of session $s_t$ is fine-tuned from that of $s_{t-1}$ and recalibrated on $s_t$. The session index is dropped below when it is not needed.
 
 \subsubsection{Learned uncertainty scale}
-The 4 uncertainty signals, from Section~\ref{sec:uncertainty-signals}, are combined into a vector $u(x)\in\mathbb{R}^{4}$. This vector $u(x)$ is given as input to a multilayer perceptron (MLP) composed of 4 input neurons for each uncertainty signal, 2 layers each with 32 neurons, and a final single output neuron. This tiny MLP outputs $\sigma_\theta(x)$ as one positive value for each spike-count window. Not to be confused with the variance of the BC-VAE $\sigma^2(x)$, the MLP output notation uses $\theta$. With this, $\sigma_\theta(x)$ becomes the main final uncertainty signal used throughout the rest of the conformal layer. The MLP loss function is described in Section~\ref{sec:conformal-loss}.
+The 4 uncertainty signals, from Section~\ref{sec:uncertainty-signals}, are combined into a vector $u(x)\in\mathbb{R}^{4}$ and standardized element-wise, $\tilde u(x)=(u(x)-m_t)/v_t$, with the mean $m_t$ and standard deviation $v_t$ of each signal over the training block of the current session $s_t$. A multilayer perceptron (MLP) $f_\theta:\mathbb{R}^4\to\mathbb{R}$, with 2 hidden layers of 32 ReLU units each, maps it to the scale
+\begin{equation}
+  \sigma_\theta(x)=\exp\!\big(\operatorname{clip}\big(f_\theta(\tilde u(x)),-3,3\big)\big)\in\big[e^{-3},e^{3}\big].
+\end{equation}
+The output layer of $f_\theta$ is initialized at zero, so before any training $\sigma_\theta(x)=1$ for every input and the layer is exactly standard class-conditional split-conformal prediction, and training moves away from this baseline only where that lowers the loss of Section~\ref{sec:conformal-loss}. The clipping keeps the scale away from 0 and infinity, which would empty or fill every prediction set. The subscript $\theta$ distinguishes this scale from the BC-VAE variance $\sigma^2(x)$. The scale $\sigma_\theta(x)$ is the only uncertainty signal that the rest of the conformal layer uses.
 
 \subsubsection{Scaled conformal scores}
 For each maze region $k$, the scaled conformal score is defined as:
@@ -167,58 +210,103 @@ For each maze region $k$, the scaled conformal score is defined as:
   S(x,k)=\frac{1-\hat p_k(x)}{\sigma_\theta(x)} .
 \end{equation}
 
-Maze regions that have lower scores $S(x,k)$ are more likely to be included in the trust region set. A lower numerator means the decoder is more confident in maze region $k$, producing a lower score and making it more likely for $k$ to be included in the trust region. A higher denominator means that the input $x$ produced higher uncertainty signals throughout the encoding-decoding pipeline, culminating in a higher $\sigma_\theta(x)$, lowering scores for all maze regions for that input $x$, relaxing the border of the trust region for that high uncertainty input $x$, and making the maze regions more likely to be included in the trust region. Concluding, both greater uncertainty $\sigma_\theta(x)$ and higher decoder probability $\hat p_k(x)$ result in a maze region $k$ being more likely to be part of the trust region. During conformal calibration, the computed score for input window $x$ is $S(x,y)$, because the true label $y$ is known. However, during test time, the true label is unknown, so $S(x,k)$ is computed for each candidate region $k$.
+A region with a lower score is more likely to enter the prediction set. The numerator is small when the decoder gives region $k$ a high probability. The denominator is large when the uncertainty signals of input $x$ are high, which lowers the scores of all regions for that input and so admits more regions into its set. A region is therefore more likely to be included when the decoder finds it probable or when the input is uncertain. During calibration the true label $y$ is known, so each calibration window gives the single score $S(x,y)$. At inference time the label is unknown, so $S(x,k)$ is computed for every candidate region $k$.
 
 \subsubsection{Class-conditional conformal thresholds}
 \label{sec:class-conditional}
-As the last calibration step, after training the MLP, the final conformal quantiles $\hat q_k$ are calculated using the validation set. Because the true label is known during calibration, each input $x_i$ only provides a single score $S(x_i, y_i)$ for the true maze region $y_i = k$. Considering that $n_k$ is the number of validation data points for that maze region, the class-conditional threshold formula is:
-
+After the scale of session $s_t$ is trained, the final thresholds are computed from calibration windows. For a finite multiset of scores $\mathcal{A}$ with $n=|\mathcal{A}|$ elements, repeated values counted separately, the split-conformal quantile~\cite{angelopoulos2022a} is
 \begin{equation}
-  \hat q_k
-  =
-  \operatorname{Quantile}\!\left(
-  \{S(x_i,y_i): y_i=k\};
-  \frac{\lceil(n_k+1)(1-\alpha)\rceil}{n_k}
-  \right).
+  Q_{1-\alpha}(\mathcal{A})=S_{(r)},\qquad r=\big\lceil (n+1)(1-\alpha)\big\rceil,
 \end{equation}
+where $S_{(1)}\le\cdots\le S_{(n)}$ are the elements of $\mathcal{A}$ in increasing order, and $Q_{1-\alpha}(\mathcal{A})=+\infty$ when $r>n$. If the calibration scores and the score of a new input are exchangeable, the new score falls at or below $Q_{1-\alpha}(\mathcal{A})$ with probability at least $1-\alpha$. The quantile removes the largest calibration scores, which come from true labels the model found implausible, so only scores at or below the threshold admit a region into the prediction set. The term $n+1$ instead of $n$ accounts for the unseen score at deployment. In words, the threshold is the calibration score of rank $r$ in increasing order, slightly above their empirical $(1-\alpha)$ quantile because the calibration set is finite.
 
-The scores $S(x_i, y_i)$ are sorted in ascending order. One objective of this equation is to remove true labels that are potential outliers and have disproportionately higher scores. So this equation sets the upper limit such that only scores equal to or lower than $\hat q_k$ are acceptable to be part of the trust region for maze region $k$. The term $n_k+1$ is used instead of $n$ to account for the unseen score considered at deployment, while the conformal layer still aims to achieve the same target coverage set during calibration.
+Because the true label is known during calibration, each calibration window $x_i$ provides a single score $S(x_i,y_i)$, for its true region $y_i$. For region $k$ of session $s_t$, the own scores are $\mathcal{A}_{t,k}=\{S(x_i,y_i):(x_i,y_i)\in\mathcal{D}^{\mathrm{cal}}_t,\ y_i=k\}$, with $n_{t,k}=|\mathcal{A}_{t,k}|$ elements, and $\mathcal{A}_t$ denotes all calibration scores of the session regardless of region. Rare regions can have very few calibration windows in a single session. With fewer than $\lceil 1/\alpha\rceil-1$ windows the quantile is infinite, and with fewer than $2/\alpha-1$ it equals the largest score (9 and 19 windows for $\alpha=0.10$). The thresholds therefore follow a borrowing rule of depth $M$:
+\begin{equation}
+  \label{rule:borrow}
+  \hat q_{t,k}=
+  \begin{cases}
+    Q_{1-\alpha}(\mathcal{A}_{t,k}) & \text{if } n_{t,k}\ge\lceil 1/\alpha\rceil \quad\text{(own)},\\[2pt]
+    Q_{1-\alpha}(\mathcal{P}_{t,k}) & \text{else if } |\mathcal{P}_{t,k}|\ge\lceil 1/\alpha\rceil \quad\text{(borrowed)},\\[2pt]
+    Q_{1-\alpha}(\mathcal{A}_t) & \text{otherwise} \quad\text{(global)},
+  \end{cases}
+\end{equation}
+where $\mathcal{P}_{t,k}=\bigcup_{j=0}^{\min(M,t-1)}\{S(x_i,y_i):(x_i,y_i)\in\mathcal{D}^{\mathrm{cal}}_{t-j},\ y_i=k\}$ pools, as a multiset union, the calibration windows of region $k$ from the current and the $M$ previous sessions of the chain. Borrowed windows are re-scored with the current model (encoder, decoder, scale and standardization of session $s_t$), so every score in a pool comes from the same model, and test blocks are never pooled. The deployed depth is $M=3$, and $M=1$ and $M=5$ are evaluated as a sensitivity analysis.
 
-This paper uses $\alpha=0.10$ to target 90\% coverage. Even considering that all calibration scores $S(x_i, y_i)$ are derived from a true label $y$, a 99\% targeted coverage (100\% is impossible with this formula) would mean selecting the largest score available to be $\hat q_k$, which is not desired because the threshold should remove outlier scores and it would result in less informative, broader trust regions. By choosing the maximum score available, the conformal method would trade higher coverage for a wider trust region. Therefore, a 90\% target balances this trade-off between coverage and sharpness, as explored further in Section~\ref{sec:trade-off}.
+This paper uses $\alpha=0.10$ to target 90\% coverage, so $\lceil 1/\alpha\rceil=10$ windows. A 99\% target would need at least 99 calibration windows for a finite quantile, so $\hat q_{t,k}$ would be infinite for almost every region and the prediction sets would contain every region. Therefore, a 90\% target balances this trade-off between coverage and sharpness, as explored further in Section~\ref{sec:trade-off}.
 
-\subsubsection{Trust region set}
-After calibration, the thresholds $\hat q_k$ are fixed. During test time, for a new input $x$, $y$ is unknown, so the scores are computed for every maze region $k\in\mathcal{Y}$. So that the trust region contains all maze regions whose score is no larger than the calibrated threshold for that region $\hat q_k$. Making the formula for the final output of the conformal layer:
+\subsubsection{Prediction set construction}
+After calibration, the thresholds $\hat q_{t,k}$ are fixed. At inference time, for a new input $x$, $y$ is unknown, so the scores are computed for every maze region $k\in\mathcal{Y}$, and the prediction set contains all maze regions whose score is no larger than the calibrated threshold for that region:
 
 \begin{equation}
   \widehat{\mathcal{C}}(x)
   =
-  \{\,k\in\mathcal{Y}: S(x,k)\le \hat q_k\,\}.
+  \{\,k\in\mathcal{Y}: S(x,k)\le \hat q_{t,k}\,\}.
 \end{equation}
 
-A smaller sharper trust region set signals certainty in the encoding-decoding pipeline, while a larger one indicates more uncertainty. Therefore, providing a reliability metric for the encoding-decoding model.
+A smaller, sharper prediction set signals certainty in the encoding-decoding pipeline, while a larger one indicates more uncertainty, which makes the set size a reliability measure for each prediction that is available at inference time, without labels.
 
 \subsubsection{Conformal MLP loss}
 \label{sec:conformal-loss}
-The MLP receives the vector $u(x)$ to output the scalar $\sigma_\theta(x)$. So then $\sigma_\theta(x)$ scales the conformal scores, which eventually define the $\hat q_k$ thresholds for the conformal layer to create the trust region $\widehat{\mathcal{C}}(x)$. Because the conformal performance is measured by the trust region size and its coverage, the MLP loss function should account for both during training. For that purpose, its loss can be defined using two terms:
-
+The MLP is trained so that the prediction sets it induces are as small as possible while each region keeps its coverage target. Whether a region belongs to a set is a step function of $\theta$, whose gradient is zero almost everywhere, so the loss replaces it with a smooth approximation that can be trained by gradient descent~\cite{stutz2022}. Each training batch $\mathcal{B}$ is split chronologically. Its earlier half $\mathcal{B}_{\mathrm{q}}$ estimates soft per-region thresholds, and the loss is measured on its later half $\mathcal{B}_{\mathrm{e}}$, so that, as at deployment, thresholds always come from data recorded before the windows they are applied to. With $\tilde q_k$ the empirical $(1-\alpha)$ quantile of $\{S(x_i,y_i): i\in\mathcal{B}_{\mathrm{q}},\ y_i=k\}$, region $k$'s soft membership in the prediction set of $x$ is
 \begin{equation}
-  \mathcal{L}_{\mathrm{conformal}}
-  =
-  \mathcal{L}_{\mathrm{size}}
-  +
-  \mathcal{L}_{\mathrm{coverage}}.
+  c_k(x)=\operatorname{sigmoid}\!\left(\frac{\tilde q_k-S(x,k)}{\tau}\right),
 \end{equation}
+which tends to the indicator of $S(x,k)\le\tilde q_k$ as the temperature $\tau\to0$. The loss has a size term and a coverage term,
+\begin{equation}
+  \label{loss:conformal}
+  \mathcal{L}_{\mathrm{conformal}}(\theta)
+  =
+  \underbrace{\frac{1}{|\mathcal{B}_{\mathrm{e}}|}\sum_{i\in\mathcal{B}_{\mathrm{e}}}\sum_{k\in\mathcal{Y}}c_k(x_i)}_{\mathcal{L}_{\mathrm{size}}}
+  +
+  \kappa\,
+  \underbrace{\frac{1}{|\mathcal{K}_{\mathrm{e}}|}\sum_{k\in\mathcal{K}_{\mathrm{e}}}\max\!\Big(0,\,(1-\alpha)-\frac{1}{n_{\mathrm{e},k}}\sum_{i\in\mathcal{B}_{\mathrm{e}}:\,y_i=k}c_{k}(x_i)\Big)}_{\mathcal{L}_{\mathrm{coverage}}},
+\end{equation}
+where $\mathcal{K}_{\mathrm{e}}$ is the set of regions present in $\mathcal{B}_{\mathrm{e}}$ and $n_{\mathrm{e},k}$ the number of its windows from region $k$. The term $\mathcal{L}_{\mathrm{size}}$ is the mean soft prediction set size, rewarding sharper prediction sets. Without it, a prediction set containing every maze region would be the easiest way to reach complete coverage. The term $\mathcal{L}_{\mathrm{coverage}}$ is the mean shortfall of soft coverage below the target $1-\alpha=90\%$, averaged over regions so that rare regions weigh as much as frequent ones. This paper uses $\tau=0.05$ and $\kappa=20$.
 
-The term $\mathcal{L}_{\mathrm{size}}$ is the average trust region size, rewarding sharper, narrower trust regions. This is important because, if not, creating a trust region that would contain all the maze regions would be the easiest way to achieve complete coverage. The term $\mathcal{L}_{\mathrm{coverage}}$ is the average amount by which the achieved coverage falls below the coverage target $1-\alpha=90\%$.
+The scale of session $s_t$ is trained with Adam on the decoder outputs and signals of its training block $\mathcal{D}^{\mathrm{tr}}_t$, starting from the scale of $s_{t-1}$ (from $\sigma_\theta=1$ for the first session), with early stopping on the same loss over the calibration block. The soft thresholds $\tilde q_k$ are used only during training, and the deployed thresholds $\hat q_{t,k}$ are computed after the MLP stops training. Algorithm~\ref{alg:scale} and Appendix~\ref{app:conformal} give the training procedure and its implementation details.
 
-During training, each batch is split. One half is used to estimate temporary conformal thresholds, while the other is used to compute the training loss. These temporary thresholds are used only during MLP training. The final thresholds $\hat q_k$ are computed from the validation set after the MLP stops training, for deployment.
+\begin{algorithm}[!ht]
+  \caption{Session-by-session chain with the learned class-conditional split-conformal layer, for one maze.}
+  \label{alg:chain}
+  \begin{algorithmic}[1]
+    \Require sessions $s_1,\ldots,s_T$ in calendar order, each split into $\mathcal{D}^{\mathrm{tr}}_t$, $\mathcal{D}^{\mathrm{cal}}_t$, $\mathcal{D}^{\mathrm{test}}_t$; warm-up length $T_0=3$; miscoverage $\alpha$; borrowing depth $M$
+    \State Initialize the encoder-decoder $\phi$ and the scale $\theta$, with the output layer of $f_\theta$ at zero, so $\sigma_\theta\equiv1$
+    \For{$t=1,\ldots,T$}
+      \State Add the input projection and read-out of $s_t$ to the encoder
+      \State $\phi\gets$ fine-tune $\phi$ on $\mathcal{D}^{\mathrm{tr}}_t$, early stopping on $\mathcal{D}^{\mathrm{cal}}_t$ \Comment{from scratch for $t=1$}
+      \State Compute the signals $u(x)$ on $\mathcal{D}^{\mathrm{tr}}_t\cup\mathcal{D}^{\mathrm{cal}}_t$; fit $(m_t,v_t)$ on $\mathcal{D}^{\mathrm{tr}}_t$
+      \State $\theta\gets\textsc{TrainScale}(\theta,\mathcal{D}^{\mathrm{tr}}_t,\mathcal{D}^{\mathrm{cal}}_t,\alpha)$ \Comment{Algorithm~\ref{alg:scale}}
+      \If{$t\le T_0$} \textbf{continue} \Comment{warm-up: trained, never tested}
+      \EndIf
+      \For{$j=0,\ldots,\min(M,t-1)$} \Comment{re-score with today's $\phi$, $\theta$, $m_t$, $v_t$}
+        \State $\mathcal{S}_{t-j}\gets\{(S(x_i,y_i),y_i):(x_i,y_i)\in\mathcal{D}^{\mathrm{cal}}_{t-j}\}$
+      \EndFor
+      \For{$k\in\mathcal{Y}$}
+        \State $\hat q_{t,k}\gets$ own, borrowed or global quantile of Equation~\eqref{rule:borrow} from $\mathcal{S}_t,\ldots,\mathcal{S}_{\max(1,t-M)}$
+      \EndFor
+      \For{$x\in\mathcal{D}^{\mathrm{test}}_t$}
+        \State $\widehat{\mathcal{C}}(x)\gets\{k\in\mathcal{Y}:S(x,k)\le\hat q_{t,k}\}$; record coverage and $|\widehat{\mathcal{C}}(x)|/K$
+      \EndFor
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+Algorithm~\ref{alg:chain} summarizes one chain. Within a session, the order of the steps matters: the scale is trained before any threshold is computed, every calibration score of the pool is recomputed with the model of the current session, and the test block is touched only once the thresholds are fixed.
+
+% Keep Algorithm 1 inside the conformal-layer section.
+\FloatBarrier
+\subsection{Baseline and evaluation}
+\label{sec:baselines}
+The method is compared with standard split-conformal prediction on a model trained for each session alone. For each tested session, a new encoder-decoder is trained from scratch on that session's training block only, with no learned scale ($\sigma_\theta\equiv1$) and a single threshold for all regions, computed from the scores $1-\hat p_{y}(x)$ of its own calibration block. This fresh model sees the same training and calibration windows as the session's step of the chain, but nothing from earlier sessions, no learned scale and no class-conditional thresholds. Its details are in Appendix~\ref{app:baseline}.
+
+To trace the trade-off between coverage and sharpness, the scale of each tested session is also retrained for 18 other coverage targets $1-\alpha'\in\{5\%,10\%,\ldots,95\%\}\setminus\{90\%\}$. Each is a side branch that starts from the scale carried into the session, is trained with $\alpha'$ in the loss and calibrated with the same borrowing rule at $\alpha'$. Only the deployed 90\% scale is carried to the next session.
+
+For every method, coverage is the fraction of test windows whose true region is in the prediction set, sharpness is measured by the mean normalized size $|\widehat{\mathcal{C}}|/K$ (lower is sharper), and decoder accuracy is the fraction of test windows whose top prediction is the true region. These are pooled over the test windows of all tested sessions of a maze. Each maze's chain is run with 5 random seeds (42 to 46), each a full chain trained from scratch, and the results report the mean and standard deviation across seeds.
 
 \subsection{Pipeline summary}
-At test time, the encoding-decoding pipeline, the MLP and the thresholds $\hat q_k$ are fixed. The conformal layer comes into action after the decoder prediction $\hat y(x)$, returning the trust region $\widehat{\mathcal{C}}(x)$.  Taking into consideration the targeted coverage level used to train the conformal layer, the trust region's size can serve as a reliability metric for the decoder's performance. Figure~\ref{fig:pipeline} summarizes the data split protocol and the resulting conformal pipeline at test time.
+At inference time on session $s_t$, the encoding-decoding pipeline, the MLP and the thresholds $\hat q_{t,k}$ are fixed. The conformal layer acts after the decoder prediction $\hat y(x)$ and returns the prediction set $\widehat{\mathcal{C}}(x)$. Because the sets are calibrated to a known coverage level, their size can serve as a reliability measure for each prediction. Figure~\ref{fig:pipeline} summarizes the data split protocol and the resulting conformal pipeline at inference time.
 
-% Diagram crafted using the TikZMaker editor:
-% https://tikzmaker.com/editor
-\begin{figure}[t]
+\begin{figure}[ht]
   \centering
   \makeatletter
   \resizebox{\linewidth}{!}{
@@ -238,227 +326,439 @@ At test time, the encoding-decoding pipeline, the MLP and the thresholds $\hat q
                 text width=21mm, inner sep=2pt, font=\large},
     flow/.style={->, thick},
   ]
-    \node[data] (x) {Spike-count\\window $x$};
-    \node[stage, right=of x] (enc) {BC-VAE encoder};
-    \node[data, right=of enc, text width=24mm] (z) {Latent $z{=}(\mu,\sigma^2)$\\{\normalsize decoder uses $\mu$}};
-    \node[stage, right=of z, text width=27mm] (al) {Transformer alignment decoder};
-    \node[data, right=of al] (p) {Softmax $\hat p(x)$};
-    \node[conf, right=of p, text width=27mm] (cf) {Conformal MLP};
-    \node[data, right=of cf] (scale) {Scale\\$\sigma_\theta(x)$};
-    \node[stage, right=of scale] (sc) {Scores\\$S(x,k)$};
-    \node[data, right=of sc, text width=26mm] (q) {Fixed thresholds\\$\hat q_k$ per region};
-    \node[data, right=of q] (C) {Trust region $\widehat{\mathcal{C}}(x)$};
-    \path \pgfextra{\pgfpointanchor{enc}{south}
-      \global\sigy=\pgf@y
-      \global\advance\sigy by -30mm};
-    \path \pgfextra{\pgfpointanchor{enc}{center}\global\sigx=\pgf@x};
-    \node[sig] (sigEnc) at (\sigx,\sigy) {Encoder\\Jacobian $\mathcal{J}^{\mathrm{enc}}$};
-    \path \pgfextra{\pgfpointanchor{z}{center}\global\sigx=\pgf@x};
-    \node[sig] (sigVar) at (\sigx,\sigy) {Posterior\\variance $\bar\nu$};
-    \path \pgfextra{\pgfpointanchor{al}{center}\global\sigx=\pgf@x};
-    \node[sig] (sigAlign) at (\sigx,\sigy) {Alignment\\Jacobian $\mathcal{J}^{\mathrm{align}}$};
-    \path \pgfextra{\pgfpointanchor{p}{center}\global\sigx=\pgf@x};
-    \node[sig] (sigEnt) at (\sigx,\sigy) {Predictive\\entropy $\mathcal{H}$};
-    \path \pgfextra{\pgfpointanchor{cf}{center}\global\sigx=\pgf@x};
-    \node[sig, text width=24mm] (uvec) at (\sigx,\sigy) {Uncertainty\\vector $u(x)$};
+    % Three rows on a 40 mm column pitch: pipeline, uncertainty signals, conformal layer.
+    \node[data, text width=22mm] (x) at (0,0) {Spike-count\\window $x$};
+    \node[stage] (enc) at (40mm,0) {BC-VAE encoder};
+    \node[data, text width=24mm] (z) at (80mm,0) {Latent $z{=}(\mu,\sigma^2)$\\{\normalsize decoder uses $\mu$}};
+    \node[stage, text width=25mm] (al) at (120mm,0) {Transformer alignment decoder};
+    \node[data] (p) at (160mm,0) {Softmax $\hat p(x)$};
+    \node[sig, text width=24mm] (uvec) at (0,-32mm) {Uncertainty\\vector $u(x)$};
+    \node[sig] (sigEnc) at (40mm,-32mm) {Encoder\\Jacobian $\mathcal{J}^{\mathrm{enc}}$};
+    \node[sig] (sigVar) at (80mm,-32mm) {Posterior\\variance $\bar\nu$};
+    \node[sig] (sigAlign) at (120mm,-32mm) {Alignment\\Jacobian $\mathcal{J}^{\mathrm{align}}$};
+    \node[sig] (sigEnt) at (160mm,-32mm) {Predictive\\entropy $\mathcal{H}$};
+    \node[conf] (cf) at (0,-66mm) {Conformal\\MLP};
+    \node[data] (scale) at (40mm,-66mm) {Scale\\$\sigma_\theta(x)$};
+    \node[stage] (sc) at (80mm,-66mm) {Scores\\$S(x,k)$};
+    \node[data, text width=25mm] (q) at (120mm,-66mm) {Fixed thresholds\\$\hat q_{t,k}$ per region};
+    \node[data, text width=22mm] (C) at (160mm,-66mm) {Prediction set\\$\widehat{\mathcal{C}}(x)$};
     \begin{scope}[on background layer]
       \node[draw, dashed, rounded corners=4pt, inner sep=4mm, fit=(enc)(z)(al)(p),
             label={[font=\large]above:Encoding-decoding pipeline}] (frozenbox) {};
       \node[draw, line width=1pt, rounded corners=4pt, inner sep=3mm, fit=(cf)(scale)(sc)(q)(C),
-            label={[font=\large]above:Learned class-conditional split-conformal layer}] (addedbox) {};
+            label={[font=\large]below:Learned class-conditional split-conformal layer}] (addedbox) {};
     \end{scope}
     \path \pgfextra{\pgfpointdiff{\pgfpointanchor{x}{west}}{\pgfpointanchor{C}{east}}
       \global\pipelinewidth=\pgf@x
-      \global\trainwidth=0.8\pipelinewidth
-      \global\valwidth=0.1\pipelinewidth
+      \global\advance\pipelinewidth by 9mm
+      \global\trainwidth=0.6\pipelinewidth
+      \global\valwidth=0.3\pipelinewidth
       \global\testwidth=0.1\pipelinewidth
       \pgfpointanchor{x}{west}
       \global\barx=\pgf@x
       \pgfpointanchor{frozenbox}{north}
       \global\bary=\pgf@y
-      \global\advance\bary by 20mm};
+      \global\advance\bary by 12mm};
     \node[timeline, fill=black!5, anchor=south west, minimum width=\trainwidth, text width=\trainwidth] (trainbar)
-      at (\barx,\bary) {80\% Train\\Fit BC-VAE + Transformer + MLP};
+      at (\barx,\bary) {60\% Training block\\Fine-tune BC-VAE + Transformer + MLP\\from session $s_{t-1}$};
     \node[timeline, fill=black!10, anchor=south west, minimum width=\valwidth, text width=\valwidth] (valbar)
-      at (trainbar.south east) {10\% Val/Calib\\Early stopping\\+ final $\hat q_k$};
+      at (trainbar.south east) {30\% Calibration block\\Early stopping\\+ thresholds $\hat q_{t,k}$};
     \node[timeline, fill=black!15, anchor=south west, minimum width=\testwidth, text width=\testwidth] (testbar)
-      at (valbar.south east) {10\% Test\\Unseen later\\evaluation};
+      at (valbar.south east) {10\%\\Test};
     \draw[flow] ($(trainbar.north west)+(0,2mm)$) --
-      node[above, font=\large] {Session chronological order}
+      node[above, font=\large] {Chronological order within session $s_t$ (repeated for every session of the chain)}
       ($(testbar.north east)+(0,2mm)$);
     \draw[flow] (x) -- (enc);
     \draw[flow] (enc) -- (z);
     \draw[flow] (z) -- (al);
     \draw[flow] (al) -- (p);
-    \draw[flow] (p) -- (cf);
-    \draw[flow] (cf) -- (scale);
-    \draw[flow] (scale) -- (sc);
-    \draw[flow] (sc) -- (q);
-    \draw[flow] (q) -- (C);
     \draw[flow] (enc) -- (sigEnc);
     \draw[flow] (z) -- (sigVar);
     \draw[flow] (al) -- (sigAlign);
     \draw[flow] (p) -- (sigEnt);
-    \draw[flow] (sigEnc) -- (sigVar);
-    \draw[flow] (sigVar) -- (sigAlign);
-    \draw[flow] (sigAlign) -- (sigEnt);
-    \draw[flow] (sigEnt) -- (uvec);
+    \draw[flow] (sigEnt) -- (sigAlign);
+    \draw[flow] (sigAlign) -- (sigVar);
+    \draw[flow] (sigVar) -- (sigEnc);
+    \draw[flow] (sigEnc) -- (uvec);
     \draw[flow] (uvec) -- (cf);
+    \draw[flow] (cf) -- (scale);
+    \draw[flow] (scale) -- (sc);
+    \draw[flow] (sc) -- (q);
+    \draw[flow] (q) -- (C);
+    \draw[flow] (p.east) -- ++(9mm,0) |- ($(sc.north)+(0,8mm)$) -- (sc.north);
   \end{tikzpicture}
   }
   \makeatother
-  \caption{Data split protocol and full conformal pipeline. Top: Sessions 80/10/10 split. The first block, aggregated across all sessions, fits the BC-VAE, the Transformer decoder, and the MLP. The middle validation/calibration block, aggregated across all sessions, supports early stopping and fixes the final thresholds $\hat q_k$ per region. The final test block, aggregated across all sessions, is held out for later evaluation. Bottom: The encoding-decoding pipeline maps each spike-count window to maze region probabilities $\hat p(x)$. The four uncertainty signals come together as $u(x)$, which is passed to the conformal MLP, which then outputs the scale $\sigma_\theta(x)$. Scores $S(x,k)$ are compared with the fixed thresholds $\hat q_k$ per region to produce the trust region $\widehat{\mathcal{C}}(x)$. The diagram was crafted using the TikZMaker editor: \url{https://tikzmaker.com/editor}.}
+  \caption{Data split protocol and full conformal pipeline. Top: The 60/30/10 split of one tested session $s_t$ of the chain. The training block fine-tunes the BC-VAE, the Transformer decoder, and the MLP carried from the previous session. The calibration block supports early stopping and fixes the thresholds $\hat q_{t,k}$ per region, borrowing from the previous sessions' calibration blocks for regions with too few windows. The test block, the remainder of the session, is held out for evaluation. First row: The encoding-decoding pipeline maps each spike-count window to maze region probabilities $\hat p(x)$. Second row: The four uncertainty signals come together as $u(x)$. Third row: $u(x)$ is standardized and passed to the conformal MLP, which outputs the scale $\sigma_\theta(x)$. The scores $S(x,k)$ combine $\hat p(x)$ and $\sigma_\theta(x)$ and are compared with the fixed thresholds $\hat q_{t,k}$ per region to produce the prediction set $\widehat{\mathcal{C}}(x)$.}
   \label{fig:pipeline}
 \end{figure}
 
+% Keep Figure 3 inside the experimental-setup section.
+\FloatBarrier
 \section{Results}
-All results shown use seed 42 and come from the test set. The primary evaluated metrics are empirical test coverage and normalized trust region size. Empirical test coverage (also named empirical coverage or test coverage throughout this paper) is defined as the fraction of test inputs for which the trust region contains the true maze region. Test coverage is interpreted against the 90\% target. The normalized trust region size is defined as the mean number of maze regions included in the trust region divided by the total number of maze regions $K$.
+All results come from the test blocks of the tested sessions and are pooled over their windows within each maze, and they are reported as the mean $\pm$ standard deviation across the 5 seeds (Section~\ref{sec:baselines}). The primary evaluated metrics are empirical test coverage and normalized prediction set size. Empirical test coverage (also named empirical coverage or test coverage throughout this paper) is defined as the fraction of test inputs for which the prediction set contains the true maze region. Test coverage is interpreted against the 90\% target. The normalized prediction set size is defined as the mean number of maze regions included in the prediction set divided by the total number of maze regions $K$.
 
+\FloatBarrier
 \subsection{Overall conformal performance by maze}
-Table~\ref{tab:results} summarizes the decoder accuracy, the empirical test coverage, and the normalized trust region size for each maze. At the 90\% target coverage, test coverage reached 0.856 for the Linear Maze, 0.814 for the Y Maze, and 0.865 for the Loop Maze. The Linear Maze produces the sharpest trust regions at 0.467, compared with 0.745 for the Y Maze and 0.712 for the Loop Maze. Decoder accuracy was the highest in the Linear Maze and lower in the Y and Loop Mazes, justifying the wider trust regions observed in the smaller datasets.
+Table~\ref{tab:results} summarizes the decoder accuracy, the empirical test coverage, and the normalized prediction set size for each maze. At the 90\% target coverage, test coverage reached $0.860\pm0.005$ for the Linear Maze, $0.859\pm0.019$ for the Y Maze, and $0.901\pm0.010$ for the Loop Maze. The prediction sets contain on average 81\% to 85\% of the maze regions in the three mazes.
 
-\begin{table}[t]
-  \caption{Summary of decoder and conformal performance. $K$ is the total number of maze regions. Decoder accuracy is the proportion of windows in the test set for which the decoder’s top probability predicted the true region. Coverage is the fraction of test windows for which the trust region contains the true maze region at the 90\% coverage target. The final column reports the mean trust region size normalized by $K$.}
+\begin{table}[!ht]
+  \caption{Summary of decoder and conformal performance, mean $\pm$ standard deviation across 5 seeds. Sessions counts every session of the chain, and Tested excludes the 3 warm-up sessions. $K$ is the total number of maze regions. Decoder accuracy is the proportion of test windows for which the decoder's top probability predicted the true region. Coverage is the fraction of test windows for which the prediction set contains the true maze region at the 90\% coverage target. The final column reports the mean prediction set size normalized by $K$.}
   \label{tab:results}
   \centering
   \footnotesize
-  \begin{tabular}{@{}l *{6}{c}@{}}
+  \begin{tabular}{@{}l *{7}{c}@{}}
     \toprule
-    Maze & Mice & Sessions & Maze Regions & Decoder Accuracy
+    Maze & Mice & Sessions & Tested & $K$ & Decoder Accuracy
          & Coverage & $|\widehat{\mathcal{C}}|/K$ \\
     \midrule
-    Linear Maze & 13 & 95 & 8 & 0.374 & 0.856 & 0.467 \\
-    Y Maze      & 7  & 23 & 8 & 0.290 & 0.814 & 0.745 \\
-    Loop Maze   & 2  & 14 & 9 & 0.270 & 0.865 & 0.712 \\
+    Linear Maze & 13 & 102 & 99 & 8 & $0.228\pm0.002$ & $0.860\pm0.005$ & $0.814\pm0.010$ \\
+    Y Maze      & 7  & 28  & 25 & 8 & $0.132\pm0.007$ & $0.859\pm0.019$ & $0.835\pm0.019$ \\
+    Loop Maze   & 3  & 19  & 16 & 9 & $0.313\pm0.034$ & $0.901\pm0.010$ & $0.851\pm0.020$ \\
     \bottomrule
   \end{tabular}
 \end{table}
 
+\FloatBarrier
 \subsection{Calibration performance on test data}
-This analysis checks whether thresholds $\hat q_k$ calibrated on the validation set maintain the 90\% coverage target on the test set. As shown in the left panel of Figure~\ref{fig:coverage}, empirical test coverage falls below the target for all 3 mazes. At the session level, 41 of 95 Linear Maze sessions, 10 of 23 Y Maze sessions, and 10 of 14 Loop Maze sessions are above the 90\% target.
+This analysis checks whether the thresholds $\hat q_{t,k}$, calibrated on each session's calibration block, maintain the 90\% coverage target on the later test block of the same session. As shown in the left panel of Figure~\ref{fig:coverage}, the Loop Maze meets the target, while the Linear and Y Mazes fall about 4 percentage points short of it. Coverage varies between sessions, as expected from test blocks that hold only the remaining 10\% of a session's task windows.
 
-The right panel of Figure~\ref{fig:coverage} shows the coverage achieved when the conformal layer is retrained across 20 requested coverage targets, equally distributed from 1\% to 99\%. The resulting curves lie below the diagonal, showing a gap between requested and achieved coverage on later test data.
+The right panel of Figure~\ref{fig:coverage} shows the coverage achieved when the conformal scale is retrained for each of the 19 coverage targets of the sweep. Achieved coverage follows the requested target closely over the whole range, within 2.5 percentage points in the Loop Maze. At high targets, the Linear and Y Mazes fall slightly below the target (at a 95\% target, $0.908\pm0.005$ and $0.905\pm0.008$), consistent with the small shortfall at the deployed 90\% target.
 
-\begin{figure}[t]
+\begin{figure}[!ht]
   \centering
   \includegraphics[width=\linewidth]{coverage-drift-tax.png}
-  \caption{Calibration performance on test data. Left: Empirical test coverage per maze against the 90\% target, with sessions as points displaying the spread per maze. Right: Achieved test coverage after retraining the conformal layer for 20 coverage targets, equally distributed from 1\% to 99\%. The gap below the diagonal shows the empirical calibration cost between the validation set and the later test data.}
+  \caption{Calibration performance on test data. Left: Empirical test coverage per maze against the 90\% target. Bars are the mean across seeds with $\pm1$ standard deviation error bars, and each point is one tested session's coverage averaged across seeds. Right: Achieved test coverage when the conformal scale is retrained at every session for 19 coverage targets, 5\% to 95\% in 5\% steps. Lines are the mean across seeds and bands $\pm1$ standard deviation. The star is the deployed model, which is the sweep's 90\% point.}
   \label{fig:coverage}
 \end{figure}
 
+\FloatBarrier
 \subsection{Coverage-sharpness trade-off}
 \label{sec:trade-off}
-Figure~\ref{fig:operating-curve} shows the frontier between coverage and sharpness obtained by retraining the conformal layer for 20 coverage targets, equally distributed from 1\% to 99\%. The horizontal axis reports achieved test coverage, while the vertical axis reports the mean trust region size normalized by the total number of maze regions. Higher achieved coverage is associated with larger trust regions, showing the expected trade-off.
+Figure~\ref{fig:operating-curve} shows the frontier between coverage and sharpness traced by the same sweep. The horizontal axis reports achieved test coverage, while the vertical axis reports the mean prediction set size normalized by the total number of maze regions. Higher achieved coverage is associated with larger prediction sets, showing the expected trade-off. The frontiers of the three mazes almost overlap, so for a given achieved coverage, the prediction sets cover a similar fraction of the maze in all three. The stars show the deployed models at a 90\% target, reported in Table~\ref{tab:results}.
 
-The Linear Maze arguably has the best conformal performance, as identified by the lowest frontier, with a lower normalized trust region size for any given achieved coverage when compared with the Y and Loop Mazes. The Y and Loop Mazes require broader trust regions, consistent with their lower decoder accuracy and smaller datasets. The stars show the deployed models at a 90\% target, reported in Table~\ref{tab:results}.
-
-\begin{figure}[t]
+\begin{figure}[!ht]
   \centering
-  \includegraphics[width=0.7\linewidth]{coverage-sharpness-frontier.png}
-  \caption{Coverage-sharpness trade-off. Achieved test coverage is shown on the horizontal axis, and mean trust region size normalized by total maze region count is shown on the vertical axis. Each curve retrains the conformal layer from scratch for 20 coverage targets, equally distributed from 1\% to 99\%. The star marks the deployed 90\% target models reported in Table~\ref{tab:results}.}
+  \includegraphics[width=0.6\linewidth]{coverage-sharpness-frontier.png}
+  \caption{Coverage-sharpness trade-off. Achieved test coverage is shown on the horizontal axis, and mean prediction set size normalized by total maze region count is shown on the vertical axis. Each curve retrains the conformal scale at every session for 19 coverage targets, 5\% to 95\% in 5\% steps. Points are the mean across seeds with $\pm1$ standard deviation error bars on both axes. The star marks the deployed 90\% target models reported in Table~\ref{tab:results}.}
   \label{fig:operating-curve}
 \end{figure}
 
-\subsection{Class-conditional conformal performance}
-Figure~\ref{fig:per-region} examines the conformal performance separately for each maze region. This analysis is important because the dataset's labels are highly imbalanced, so averages across the entire maze can mask weak behavior in rare regions. For each maze, the figure reports empirical test coverage, mean normalized trust region size, and the region's share of data points from the entire dataset.
+\FloatBarrier
+\subsection{Comparison with standard split-conformal prediction}
+Table~\ref{tab:baselines} compares the method with the baseline of Section~\ref{sec:baselines}, a fresh model trained on each session alone with standard split-conformal prediction. The mean coverage gap is the mean over tested sessions of $|\text{coverage}-0.90|$, which measures how close each session is to the target rather than the pooled coverage alone.
 
-The results per region show that test coverage differs across maze regions and should be interpreted alongside the mean trust region size. Some regions approach or exceed the 90\% coverage target, while others fall below it. The dataset share bars provide context for these differences, since regions with fewer data points tend to have worse conformal performance. In the Loop Maze, region 5 has no empirical test coverage or trust region size results because it had no test data points.
+The fresh model's prediction sets are smaller, but its coverage falls well below the target in the Linear and Y Mazes (0.768 and 0.700, against 0.860 and 0.859 for the method), and in the Loop Maze it reaches 0.881 against 0.901. Its mean coverage gap is about 2 to 2.5 times that of the method in every maze, so the method keeps individual sessions much closer to the target. The advantage of the method holds both for sessions of returning mice and for the first session of a new mouse. On the tested sessions that are the first of their mouse, 10 in the Linear Maze and 5 in the Y Maze (the Loop Maze has none after the warm-up), the method reaches a coverage of $0.870\pm0.022$ and $0.815\pm0.017$ against $0.728\pm0.020$ and $0.772\pm0.041$ for the fresh model.
 
-\begin{figure}[t]
+\begin{table}[!ht]
+  \caption{Comparison with standard split-conformal prediction, mean $\pm$ standard deviation across 5 seeds, over all tested sessions. Method: the session chain with the learned class-conditional split-conformal layer. Fresh model: an encoder-decoder trained from scratch on each session, with $\sigma_\theta\equiv1$ and one threshold for all regions. Mean coverage gap: mean over tested sessions of $|\text{coverage}-0.90|$.}
+  \label{tab:baselines}
   \centering
-  \includegraphics[width=\linewidth]{per-region-coverage.png}
-  \caption{Conformal performance per region and label distribution. Each subplot corresponds to one maze. For inputs whose true label is the corresponding maze region, red bars show empirical test coverage, and green bars show the mean trust region size normalized by the number of maze regions. Blue bars show the region's share of data points for the entire dataset. The dashed line marks the 90\% coverage target. Region 5 in the Loop Maze has no test coverage or trust region size estimate because no test data points were present in that region.}
-  \label{fig:per-region}
-\end{figure}
-
-\subsection{Decoder error correlations}
-Table~\ref{tab:within-chunk} reports the Pearson correlation of test decoder error with the normalized trust region size and the learned uncertainty scale $\sigma_\theta(x)$. Decoder error is 0 or 1 for a single data point, so test data points are first grouped, as described in the caption, and each group contributes its error rate. Positive correlations indicate that the conformal layer produces a higher $\sigma_\theta(x)$ and creates larger trust regions where the decoder errs more often.
-
-The Linear Maze shows strong positive correlations, 0.86 for trust region size and 0.99 for the learned scale. The Y Maze shows weaker positive correlations. In the Loop Maze both correlations are negative: the decoder errs more often where the trust regions are smaller, so there the conformal layer does not track decoder error.
-
-\begin{table}[t]
-  \caption{Decoder error Pearson correlations over grouped test data points. The first correlation groups by normalized trust region size $|\widehat{\mathcal{C}}|/K$, one group per size level. The second groups by the MLP uncertainty scale $\sigma_\theta(x)$, in 10 equal-count bins. Each group contributes its error rate and is weighted by its number of data points. Positive values indicate that decoder errors tend to coincide with larger trust regions or larger MLP scales.}
-  \label{tab:within-chunk}
-  \centering\footnotesize
-  \begin{tabular}{@{}l c c@{}}
+  \footnotesize
+  \begin{tabular}{@{}l l *{3}{c}@{}}
     \toprule
-    Maze
-    & corr(decoder error, $|\widehat{\mathcal{C}}|/K$)
-    & corr(decoder error, $\sigma_\theta(x)$) \\
+    Maze & Method & Coverage & $|\widehat{\mathcal{C}}|/K$ & Mean coverage gap \\
     \midrule
-    Linear Maze & $+0.86$ & $+0.99$ \\
-    Y Maze       & $+0.61$ & $+0.68$ \\
-    Loop Maze    & $-0.78$ & $-0.86$ \\
+    Linear Maze & Method      & $0.860\pm0.005$ & $0.814\pm0.010$ & $0.073\pm0.007$ \\
+                & Fresh model & $0.768\pm0.008$ & $0.674\pm0.008$ & $0.172\pm0.006$ \\
+    \midrule
+    Y Maze      & Method      & $0.859\pm0.019$ & $0.835\pm0.019$ & $0.075\pm0.012$ \\
+                & Fresh model & $0.700\pm0.033$ & $0.638\pm0.027$ & $0.190\pm0.029$ \\
+    \midrule
+    Loop Maze   & Method      & $0.901\pm0.010$ & $0.851\pm0.020$ & $0.053\pm0.007$ \\
+                & Fresh model & $0.881\pm0.026$ & $0.650\pm0.028$ & $0.104\pm0.006$ \\
     \bottomrule
   \end{tabular}
 \end{table}
 
+\FloatBarrier
+\subsection{Class-conditional conformal performance}
+Figure~\ref{fig:per-region} examines the conformal performance separately for each maze region. This analysis is important because the dataset's labels are highly imbalanced, so averages across the entire maze can mask weak behavior in rare regions. For each maze, the figure reports empirical test coverage, mean normalized prediction set size, and the region's share of the windows of the entire dataset.
+
+Coverage is similar across the regions of each maze, mostly between 0.80 and 0.95, even though the most frequent region of each maze has 10 to 15 times the data of the rarest one. The rarest regions show the widest spread across seeds, as expected from their few test windows. In the Loop Maze, only one test window fell in region 5, below the minimum of 5 windows needed to report a region, and regions 3 and 6 have only 13 and 15 test windows, which explains their spread.
+
+\begin{figure}[!ht]
+  \centering
+  \includegraphics[width=\linewidth]{per-region-coverage.png}
+  \caption{Conformal performance per region and label distribution. Each subplot corresponds to one maze. For inputs whose true label is the corresponding maze region, red bars show empirical test coverage, and green bars show the mean prediction set size normalized by the number of maze regions. Blue bars show the region's share of the windows of the entire dataset. The dashed line marks the 90\% coverage target. Bars are the mean across seeds with $\pm1$ standard deviation error bars. Regions with fewer than 5 test windows are not reported, such as region 5 of the Loop Maze, which has a single test window.}
+  \label{fig:per-region}
+\end{figure}
+
+\FloatBarrier
+\subsection{Decoder error correlations}
+Table~\ref{tab:within-chunk} reports the Pearson correlation between test decoder error and the normalized prediction set size. Decoder error is 0 or 1 for a single window, so the test windows are first grouped by set size, one group per size level, and each group contributes its error rate. A positive correlation indicates that the conformal layer creates larger prediction sets where the decoder errs more often, which is what a reliability measure should do.
+
+The mean correlation with the prediction set size is positive in all three mazes, strongly and consistently so in the Linear Maze ($+0.87\pm0.05$). In the Y and Loop Mazes it is also positive on average, with more variation between seeds.
+
+\begin{table}[!ht]
+  \caption{Pearson correlation between decoder error and normalized prediction set size over grouped test windows, mean $\pm$ standard deviation across 5 seeds. The test windows are grouped by $|\widehat{\mathcal{C}}|/K$, one group per size level, and each group contributes its error rate, weighted by its number of windows. Positive values indicate that decoder errors tend to coincide with larger prediction sets.}
+  \label{tab:within-chunk}
+  \centering\footnotesize
+  \begin{tabular}{@{}l c@{}}
+    \toprule
+    Maze & corr(decoder error, $|\widehat{\mathcal{C}}|/K$) \\
+    \midrule
+    Linear Maze & $+0.87\pm0.05$ \\
+    Y Maze      & $+0.37\pm0.33$ \\
+    Loop Maze   & $+0.58\pm0.28$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\FloatBarrier
 \subsection{Uncertainty signals contribution}
-Figure~\ref{fig:signal-confound} shows how sensitive the MLP scale $\sigma_\theta(x)$ is to each one of the four uncertainty signals. Entropy shows the greatest sensitivity across all 3 mazes, indicating that the MLP relies more on the decoder's output. This is expected because predictive entropy is computed directly from the final softmax probability distribution.
+Figure~\ref{fig:signal-confound} shows how sensitive the learned scale $\sigma_\theta(x)$ is to each one of the four uncertainty signals, measured as the mean absolute change of $\log\sigma_\theta(x)$ per standard deviation of the signal (Appendix~\ref{app:metrics}). Predictive entropy has the largest mean sensitivity in the Linear and Loop Mazes, as expected because it is computed directly from the decoder's final softmax distribution. In the Y Maze, the alignment Jacobian and the posterior variance have larger mean sensitivities than the entropy.
 
-However, the remaining signals also show comparable sensitivity, suggesting that $\sigma_\theta(x)$ is not exclusively determined by the entropy. Posterior variance is the second largest signal in the Linear Maze, and in the Y Maze is the alignment Jacobian. Loop Maze shows a more even contribution across posterior variance and both Jacobian signals.
+All four signals contribute comparable sensitivities, so $\sigma_\theta(x)$ is not determined by the entropy alone. Entropy ranks first in every Linear Maze seed, while the order of the other signals varies between seeds.
 
-\begin{figure}[t]
+\begin{figure}[!ht]
   \centering
   \includegraphics[width=0.7\linewidth]{signal-confound.png}
-  \caption{Sensitivity of the learned conformal scale to each uncertainty signal. Bars show the mean relative change of $\sigma_\theta(x)$, $|\partial \log \sigma_\theta(x) / \partial z|$, per standard deviation $z$ of each input uncertainty signal, averaged over the test set for each maze. The relative change does not depend on the overall level of $\sigma_\theta(x)$, so the mazes can be compared directly.}
+  \caption{Sensitivity of the learned conformal scale to each uncertainty signal. Bars show the mean relative change of $\sigma_\theta(x)$, $|\partial \log \sigma_\theta(x) / \partial \tilde u_j(x)|$, per standard deviation of each standardized uncertainty signal $\tilde u_j$, computed with each session's $\sigma_\theta$ on that session's test windows and averaged over all test windows of each maze. Bars are the mean across seeds with $\pm1$ standard deviation error bars, and the dots are the individual seeds. The relative change does not depend on the overall level of $\sigma_\theta(x)$, so the mazes can be compared directly.}
   \label{fig:signal-confound}
 \end{figure}
 
+\FloatBarrier
 \section{Discussion}
-The results show that the conformal layer can construct a trust region that retains a substantial empirical coverage around the predictions of a low accuracy decoder. The coverage is obtained at the cost of larger trust regions due to the decoder's low performance. Indicating that the conformal layer is serving its design purpose and analyzing the encoding-decoding pipeline uncertainty to output wider trust regions, converting what could otherwise be mistrusted predictions into a quantifiable reliability metric.
+The results show that the learned class-conditional split-conformal layer, deployed in a session-by-session chain, keeps its coverage, pooled over the held-out remainder of every tested session, close to the target. Coverage is within about 4 percentage points of the 90\% target in the Linear and Y Mazes and on target in the Loop Maze. Standard split-conformal prediction on a model trained for each session falls short of the target by up to 20 points and deviates from it about 2 to 2.5 times more in individual sessions.
 
-\subsection{Conformal calibration}
-Across all 3 mazes, the conformal layer retained substantial empirical coverage, but coverage did not precisely match the 90\% target. This gap reflects the cost of applying a split-conformal method to neural data. Where the final thresholds were calibrated on the validation data and conformal performance is measured on the test set. In this paper, that gap is treated as a split-conformal calibration cost, called the drift tax, due to the neural drift's impact on the dataset used.
+\subsection{Calibration along the session chain}
+Three parts of the method act together to keep coverage close to the target: the thresholds are set per region, so a session whose test block visits the regions in other proportions than its calibration block keeps its coverage in each region; regions with too few calibration windows borrow them from the most recent sessions, which a model trained on one session cannot do; and the scale is trained on every session from the one carried from the previous session.
 
-The test coverage spread across sessions indicates that the drift tax is not uniform across recordings. Moreover, the drift tax shows that the coverage target should not be interpreted as the expected empirical coverage in neural data. If a BCI application requires a specific empirical coverage level, the requested target should be set higher to account for this gap. However, setting a higher target also widens the trust regions, reducing sharpness. As shown by the coverage and sharpness trade-off, higher coverage can be achieved, but at the cost of less informative trust regions.
+The remaining shortfall in the Linear and Y Mazes reflects the cost of applying a split-conformal method to data recorded later than the calibration data. Conformal coverage is guaranteed when calibration and test scores are exchangeable (Appendix~\ref{app:guarantee}), and a chronological split from the same session does not satisfy this assumption. The coverage sweep shows that the shortfall is small and grows only at high targets, so a BCI application that requires a given empirical coverage can request a slightly higher target. At a 95\% target, the achieved coverage was 90.8\% and 90.5\% in the Linear and Y Mazes, at the cost of larger prediction sets.
 
-\subsection{Decoder performance}
-The results show that decoder performance directly translates to conformal layer performance. The Linear Maze has the highest decoder accuracy, producing the sharpest trust regions and the lowest coverage and sharpness curve. Whereas the Y and Loop Mazes have lower decoder accuracy and require broader trust regions to maintain coverage. This is consistent with the intended role of the conformal layer, as it's not designed to correct decoder errors, but to express lower confidence by returning wider trust regions.
+\subsection{Decoder performance and sharpness}
+The conformal layer is not designed to correct decoder errors, but to express lower confidence by returning larger prediction sets. With decoder accuracies between 0.13 and 0.31, the sets contain 81\% to 85\% of the maze regions on average, and a more accurate decoder would allow sharper sets. The coverage-sharpness frontiers of the three mazes almost overlap, so in the present data the decoder, more than the maze, determines how sharp the prediction sets can be.
 
-When the encoding-decoding pipeline uncertainty signals indicate high distrust, the conformal layer has no other option but to create wider trust regions to avoid sacrificing coverage. Therefore, the decoder accuracy limits how sharp the trust regions can be. The different results in trust region sharpness across mazes, along with the positive correlations of decoder error with trust region size and the MLP output in the Linear and Y Mazes, support the interpretation that the conformal layer tracks decoder uncertainty in those mazes. In the Loop Maze the correlations are negative, so there the conformal layer does not track decoder error.
+Decoder errors coincide with larger prediction sets in all three mazes, strongly and consistently in the Linear Maze, which supports the use of the set size as a label-free reliability measure.
 
-\subsection{Classes imbalance}
-The analysis per region in Figure~\ref{fig:per-region} shows why a class-conditional conformal method is important for imbalanced datasets. The data used in this paper has a highly imbalanced label distribution. Not using a class-conditional approach would mean using a single conformal threshold, so conformal scores would not be stored per maze region. In this case, a single threshold would set the rule for the entire maze, determining which regions to include in the trust region.
+\subsection{Class imbalance}
+The analysis per region in Figure~\ref{fig:per-region} shows why a class-conditional conformal method is important for imbalanced datasets. Although the most frequent region of each maze has 10 to 15 times the data of the rarest one, coverage is similar across regions. A single threshold for all regions would set one rule for the whole maze, so the frequent regions would determine it and the rare regions would carry the shortfall. The borrowing rule keeps this possible on single sessions, since most test windows are covered by a threshold from their own session's calibration block, and the global fallback is used for 1.8\% to 4.5\% of them (Appendix~\ref{app:pool}).
 
-In contrast, the class-conditional method applied calibrates separate thresholds for each maze region. With this approach, the results show that, even though regions with less data still suffer, conformal performance remains balanced within tolerance throughout the maze, especially taking into consideration how imbalanced the label distribution is. This is possible because, in maze regions with less data, coverage is usually achieved using wider trust regions.
-
-Nevertheless, a stricter comparison between a class-conditional and a regular conformal method under the same conditions is needed to draw stronger conclusions.
-
-\subsection{Signals Contributions}
-The MLP output, the learned scale, is most sensitive to the predictive entropy uncertainty signal for all 3 mazes. This is expected since entropy is computed directly from the decoder’s final probability softmax distribution over the maze regions. Nevertheless, the posterior variance and the Jacobian signals also contribute. These results support all the uncertainty diagnostic signals computed for the encoding-decoding pipeline. However, further analysis is needed to prove that they are all strictly necessary to achieve the displayed conformal performance.
+\subsection{Uncertainty signals contribution}
+The learned scale responds to all four uncertainty signals with comparable sensitivity, and predictive entropy is the most influential signal in two of the three mazes. Establishing which signals the layer needs, for instance by removing them one at a time, is left for future work.
 
 \subsection{Limitations and future work}
-The main limitation of this study is the limited size and imbalance of the available dataset. This constraint affects both the encoder-decoder and the conformal layer, especially in the Y and Loop Mazes. The Loop Maze is the clearest example because it has only two mice available, decoder accuracy was the lowest, and maze region 5 had no test data.
+\label{sec:limitations}
+The main limitation of this study is the low accuracy of the decoder, which limits how sharp the prediction sets can be. The Loop Maze dataset is also small, with three mice. The layer should be evaluated after stronger decoders and other encoding-decoding architectures~\cite{schneider2023a,azabou2023}.
 
-The data from all available mice was aggregated within each maze to increase the number of available data points. This approach supports the present analysis, but prevents strong conclusions about performance within individual mice, across sessions, or across animals. Subsequent work should evaluate the conformal layer under stricter animal and session data splits once enough data is available. In the meantime, artificially generated neural data could also be used.
+A constant-scale ablation (Appendix~\ref{app:ablation}) reached coverage at least as high as the learned scale at equal prediction set size, so the learned scale does not make the prediction sets more informative, and the gains over the fresh baseline should not be attributed to it alone. Training objectives that make the scale sharpen the prediction sets rather than enlarge them, for instance through the weight $\kappa$ of the coverage term, are a direction for future work. Labels are needed only before inference, but the chain needs many of them, since 90\% of the task windows of every session go to fine-tuning and calibration, which a deployed BCI would have to collect in a calibration phase at the start of each session. Reducing this need, for instance with unsupervised alignment~\cite{degenhart2020a,karpowicz2025a} or shorter calibration blocks, is needed for practical use. The scale is also trained on the decoder's outputs on its own training block, where the decoder is more accurate than on later data, and the calibration block is used both for early stopping and for the thresholds.
 
-The present analysis does not yet include the comparisons needed to isolate the contribution of each design choice. Upcoming research should compare the MLP scale against a standard conformal approach with $\sigma_\theta(x)=1$, and compare class-conditional thresholds against a single threshold. Furthermore, future work should also test the conformal layer approach with other encoding-decoding architectures~\cite{schneider2023a,azabou2023}. Experiments are also needed to determine whether the posterior variance and the Jacobian uncertainty signals improve performance beyond predictive entropy alone. Additional new uncertainty signals could also be implemented and paired with temporally structured models, such as recurrent neural networks, rather than an MLP.
-
-Finally, the current task is limited to discrete classification. With bigger datasets and stronger decoder performance, the conformal layer could be extended towards continuous position decoding, where the trust region would correspond to a continuous spatial region rather than a set of discrete labels~\cite{angelopoulos2022a}, possibly resulting in a much more informative reliability metric to quantify the impact of neural drift in BCI applications.
+The test block of each session holds only the remaining 10\% of its task windows, so the coverage of a single session is a noisy estimate. The position of a session along the chain mixes elapsed time, the identity of the mouse and the experience accumulated by the model, so the present results do not measure neural drift itself. Finally, the current task is limited to discrete classification. With stronger decoder performance, the conformal layer could be extended towards continuous position decoding, where the prediction set would correspond to a continuous spatial region rather than a set of discrete labels~\cite{angelopoulos2022a}.
 
 \section{Conclusion}
-This paper evaluated a learned class-conditional split-conformal layer for uncertainty-aware neural decoding under neural drift. The method was applied after a BC-VAE and a Transformer decoder, creating trust regions of plausible results for neural decoding. Across 3 virtual-reality maze navigation experiments recorded from flexible brain probes, the conformal layer retained substantial empirical coverage on unseen data.
+This paper proposed a learned class-conditional split-conformal layer for uncertainty-aware neural decoding under neural drift, with a scale learned from label-free signals of the latent space and the decoder, per-class thresholds, and a rule that borrows calibration data from recent sessions for rare classes. Deployed in a session-by-session chain that carries a BC-VAE and a Transformer decoder across 149 recording sessions from flexible brain probes in 13 mice and 3 virtual-reality mazes, the layer kept coverage, pooled over the held-out remainder of every tested session, within about 4 percentage points of a 90\% target, and kept individual sessions much closer to the target than standard split-conformal prediction on a model trained per session. Achieved coverage followed the requested target over the whole range from 5\% to 95\%.
 
-The main finding is that the conformal layer provides reliability information regarding the current decoder performance without requiring recent labeled data. When the decoder performance was weaker, the trust regions became broader, indicating that the method autonomously identified greater uncertainty in the encoding-decoding pipeline. Proving that the proposed model could serve as a prospective reliability layer for BCI decoding pipelines, which is highly needed for the viability of chronic BCIs under neural drift. However, wider implementation of the presented method still depends on larger dataset experiments and comparisons against baseline methods.
+Once calibrated on labeled data recorded earlier in the same session, the layer needs no labels at inference time, which is a step towards the inference-time reliability measures a chronic BCI needs under neural drift. Because the prediction sets are only as sharp as the decoder allows, stronger decoders, the separation of the learned scale's contribution, and larger datasets are the next steps towards using the layer as a reliability measure in BCI decoding pipelines.
 
 \section*{Data Availability}
-The data used in this paper is owned by the Liu Lab for Bioelectronics at the Harvard John A. Paulson School of Engineering and Applied Sciences. Database access instructions are available at \url{https://github.com/ese-ada-lovelace-2025/irp-ggf25}, but access requires private credentials.
+The recordings used in this paper were collected at the Harvard John A.\ Paulson School of Engineering and Applied Sciences and are not publicly available. Access to the database requires private credentials, and its setup is documented in the code repository (\url{https://github.com/ada-ggf25/Conformal-BCI}).
 
 \section*{Code Availability and Reproducibility}
-The code used to perform the paper’s analyses is available at \url{https://github.com/ese-ada-lovelace-2025/irp-ggf25}. A fixed random seed of 42 was used throughout. Unless otherwise stated in their respective captions, the final figures and tables were generated using the notebook at \url{https://github.com/ese-ada-lovelace-2025/irp-ggf25/blob/main/analyses/cross_maze.ipynb}.
+The code used to perform the paper's analyses is available at \url{https://github.com/ada-ggf25/Conformal-BCI} under the Apache License 2.0. Each maze's session chain was run with the random seeds 42, 43, 44, 45 and 46 by \texttt{analyses/per\_maze.ipynb}, and every figure and table of the paper was generated from the resulting results bundles by \texttt{analyses/cross\_maze.ipynb}, except Figure~\ref{fig:pipeline} and the photograph in Figure~\ref{fig:data-input}. All hyperparameters are listed in Appendix~\ref{app:hyper}.
 
 \section*{AI Acknowledgments}
-I acknowledge using ChatGPT (model: GPT‑5.6) by OpenAI (\url{https://openai.com/chatgpt}) and Claude (model: Sonnet 4.8) by Anthropic (\url{https://claude.ai/}) to support drafting code documentation and code tests, debugging code, and brainstorming code implementation choices. I used the GitLens extension for Visual Studio (\url{https://gitlens.amod.io}) together with GitHub Copilot (\url{https://github.com/features/copilot}) to help phrase commit messages and pull request descriptions. I confirm that the work submitted is my own and that I verified and adapted all AI outputs.
+The authors used ChatGPT by OpenAI, with GPT-5.6 (\url{https://openai.com/chatgpt}), and Claude by Anthropic, with Sonnet 4.8 and Opus 5.5, in the Claude app (\url{https://claude.ai/}) and in Claude Code (\url{https://claude.com/claude-code}), to support writing and testing code, debugging, brainstorming implementation choices, analyzing results, and drafting and editing the manuscript. The authors verified and adapted all AI outputs and take full responsibility for the content of this paper.
 
 \begin{ack}
-I thank Professor Jia Liu for the opportunity to conduct this project in the Liu Lab and for his guidance. I am grateful to Dr. Tom Davison for his supervision, and to Hao Shen and Tianshu Tan for their support. I also thank the rest of the Liu Lab members for their insightful discussions throughout the project.
+We thank our colleagues at the Harvard John A.\ Paulson School of Engineering and Applied Sciences and at Imperial College London for insightful discussions throughout the project.
 \end{ack}
 
 \bibliographystyle{unsrtnat}
 \bibliography{references}
 
-% The NeurIPS paper checklist is mandatory for submission; it does not count toward the page limit.
-\input{checklist.tex}
+\newpage
+\appendix
+
+\section{Data processing}
+\label{app:data}
+
+\paragraph{Windows.} Spike activity is binned at $\Delta=100$~ms. The entry $x_{b,\ell}$ is the firing rate of neuron $\ell$ in bin $b$, its spike count divided by $\Delta$, in Hz. A session with $N$ neurons and $B$ bins gives non-overlapping windows $x\in\mathbb{R}^{L\times N}$ of $L=10$ consecutive bins, the trailing $B \bmod L$ bins being dropped. Only task windows are kept, whose bins all belong to task trials, the trials that end with the water reward (a window may span two consecutive trials). In the Linear Maze, every bin must also have a recorded distance to the water. Each bin $b$ is assigned the region $r_b$ of the mouse's position at that bin, and a window is kept only if $r_b$ is the same for all its bins, and that region is its label $y$. A mouse is included if it has at least 2 sessions with $N\ge5$ in the maze, with $N$ read from the session's first trial. A session is used if its behavioral and neural data load and line up with its windows, it has $N\ge5$ neurons and at least 20 task windows covering at least 2 regions, and its 60/30/10 cut gives at least 50 calibration and 20 test windows. This gate is applied to every session, warm-up sessions included, before the warm-up sessions are cut again 70/30. The sessions used were recorded between September 2024 and June 2025.
+
+\paragraph{Linear Maze regions.} In the Y and Loop Mazes, the regions are fixed segments of the maze (Figure~\ref{fig:maze-region}). In the Linear Maze, the reward is delivered at a position that changes between trials, so the regions are defined relative to it. The corridor from the start to the trial's water reward is cut into 8 equal segments, and a position beyond the reward belongs to the last one, so the physical length of a segment changes with the reward position. At every sample, the reward position is $\hat w=100\cdot\operatorname{round}\big((p+\delta)/100\big)$, where $p$ is the mouse's position along the corridor and $\delta$ its distance to the water, so that $p+\delta$ is constant within a trial up to rounding. The trial's reward position $w$ is the mode of $\hat w$ over the trial, and a trial is kept only if at least 80\% of its samples satisfy $|\hat w-w|\le100$. A trial whose reward position cannot be determined in this way is dropped, which removed 55 of the 1{,}084 task trials of all Linear Maze recordings in the database (5\%). A bin at position $p$ is then assigned
+\begin{equation}
+  r=\min\!\big(7,\ \max\big(0,\ \lfloor 8\,p/w\rfloor\big)\big),
+\end{equation}
+so that the 8 regions are equal fractions of the corridor up to the reward, and positions beyond it fall in region 7.
+
+\paragraph{Splits and normalization.} The task windows of a session, in time order, are cut into contiguous blocks: the first 60\% form $\mathcal{D}^{\mathrm{tr}}$, the next 30\% $\mathcal{D}^{\mathrm{cal}}$ and the final 10\% $\mathcal{D}^{\mathrm{test}}$, and warm-up sessions are cut 70\% and 30\% with no test block. In tested sessions, windows that straddle a region boundary are removed after the cut, while warm-up sessions are cut after their removal. Each neuron $\ell$ is z-scored with the mean $\bar x_\ell$ and standard deviation $s_\ell$ of its activity over all bins of $\mathcal{D}^{\mathrm{tr}}$, $\tilde x_{b,\ell}=(x_{b,\ell}-\bar x_\ell)/(s_\ell+10^{-3})$, the constant protecting a neuron that is silent in training. The encoder reads $\tilde x$ and reconstructs the unnormalized rates $x$.
+
+\section{Encoding-decoding pipeline}
+\label{app:pipeline}
+
+\subsection{BC-VAE}
+\paragraph{Architecture.} Every neuron of a session is treated as session specific, since neuron identities are not shared between sessions. At each bin $b$, the session's input projection maps the neurons to $h_b=\operatorname{ReLU}(\operatorname{LN}(W_s\tilde x_b))\in\mathbb{R}^{64}$, where LN is layer normalization and $W_s$ belongs to session $s$, and a learned gate fuses it with a shared pathway, $\bar h_b=g_b\odot h^{\mathrm{sh}}_b+(1-g_b)\odot A[h^{\mathrm{sh}}_b;h_b]$ with $g_b=\operatorname{sigmoid}(G[h^{\mathrm{sh}}_b;h_b])$, where $A$ and $G$ are linear maps. The shared pathway projects neurons shared across sessions. No neuron is shared in this study, so $h^{\mathrm{sh}}_b$ reduces to a learned constant vector. A two-layer bidirectional GRU with 128 hidden units per direction and dropout 0.1 between its layers reads $\bar h_1,\ldots,\bar h_L$, and its final forward and backward states give $\mu(x)\in\mathbb{R}^{16}$ and $\log\sigma^2(x)\in\mathbb{R}^{16}$ through two linear maps. A latent $z=\mu+\sigma\odot\epsilon$, $\epsilon\sim\mathcal{N}(0,I)$, initializes and drives a GRU generator with 128 hidden units unrolled for $L$ steps, whose outputs are projected to factors $\eta_b\in\mathbb{R}^{32}$ per bin, and the session's read-out maps the factors to Poisson rates $\lambda_{b,\ell}=\operatorname{softplus}(R_s \eta_b)_\ell>0$. A classifier MLP ($16\to64\to K$, ReLU, dropout 0.2) predicts the region from $z$ during training and from $\mu$ at evaluation.
+
+\paragraph{Loss.} For a batch of $n$ windows, the loss is
+\begin{equation}
+  \begin{split}
+  \mathcal{L}_1={}&\underbrace{\frac{1}{n\,L\,N}\sum_{i,b,\ell}\big(\lambda_{i,b,\ell}-x_{i,b,\ell}\log\lambda_{i,b,\ell}\big)}_{\text{Poisson NLL}}
+  +\lambda_{\mathrm{reg}}\,\underbrace{\frac1n\sum_i -\log \pi_{y_i}(z_i)}_{\text{region CE}}\\
+  &+\beta_e\,\underbrace{\frac{1}{d}\sum_{j=1}^{d}\frac1n\sum_i \tfrac12\big(\mu_{i,j}^2+\sigma_{i,j}^2-\log\sigma_{i,j}^2-1\big)}_{\mathrm{KL}(q(z\mid x)\,\|\,\mathcal{N}(0,I))},
+  \end{split}
+\end{equation}
+where $\pi(z)$ is the classifier's softmax, $\lambda_{\mathrm{reg}}=0.2$ and $d=16$. The Poisson term is applied to the firing rates $x$ and omits the terms that do not depend on $\lambda$. When the model is trained from scratch (the first session of the chain and the fresh baseline), the KL weight ramps linearly, $\beta_e=0.5\min(1,e/10)$ at epoch $e$, while fine-tunes use $\beta_e=0.5$ from the first epoch. Training uses AdamW (learning rate $10^{-3}$, weight decay $10^{-2}$ on the classifier head and none elsewhere), cosine annealing over the epoch cap, batches of 256 windows, at most 200 epochs, and early stopping on $\mathcal{L}_1$ over $\mathcal{D}^{\mathrm{cal}}$ with patience 20 and minimum improvement $10^{-4}$, counted only once the KL ramp is complete, and the best epoch is restored. The early-stopping loss is computed in evaluation mode, where the classifier reads $\mu$ while the reconstruction still uses a sampled $z$, and its reconstruction and KL terms are averaged per batch.
+
+\subsection{Transformer alignment decoder}
+\paragraph{Architecture.} With the BC-VAE frozen, the decoder reads the sequence $(\mu_{i-4},\ldots,\mu_i)$ of posterior means of a window and its 4 predecessors in the session's full window sequence, including windows outside the task blocks, which carry no label and only provide context. The mean of the session's first window is repeated in front of the earliest windows. The latents are projected to 64 dimensions, a learned positional embedding is added, and a 2-layer Transformer encoder with layer normalization applied before attention and the feed-forward block (4 heads, feed-forward width 256, dropout 0.1) processes the sequence. The output at the last position is mapped by layer normalization and a linear map to the aligned latent $\tilde z\in\mathbb{R}^{16}$. A projector ($16\to64\to64$, GELU) followed by $\ell_2$ normalization gives the contrastive embedding $\xi$, and a classifier MLP ($16\to128\to64\to K$, each hidden layer followed by layer normalization, GELU and dropout 0.2 and 0.1) gives the logits whose softmax is $\hat p(x)$.
+
+\paragraph{Loss.} The loss is $\mathcal{L}_2=\mathcal{L}_{\mathrm{CE}}+\lambda_{\mathrm{con}}\mathcal{L}_{\mathrm{con}}$ with $\lambda_{\mathrm{con}}=2$. The contrastive term is a supervised NT-Xent loss~\cite{schneider2023a} over the batch,
+\begin{equation}
+  \mathcal{L}_{\mathrm{con}}=-\frac1n\sum_{i}\log\frac{\sum_{j\ne i}\omega_{i,j}\exp(\xi_i^\top \xi_j/\tau_c)}{\sum_{j\ne i}\exp(\xi_i^\top \xi_j/\tau_c)},\qquad \omega_{i,j}=\frac{\mathbb{1}[y_i=y_j]\,(1+\mathbb{1}[s_i\ne s_j])}{\sum_{l\ne i}\mathbb{1}[y_i=y_l]\,(1+\mathbb{1}[s_i\ne s_l])},
+\end{equation}
+with temperature $\tau_c=0.1$, so windows of the same region are pulled together, pairs from different sessions with double weight. An anchor with no other window of its region in the batch contributes the constant $-\log 10^{-8}$ and no gradient. In the chain, every decoder training batch comes from the current session, so all positive pairs have the same weight. Training uses Adam (learning rate $3\cdot10^{-4}$), cosine annealing, batches of 256 sequences, at most 200 epochs, and early stopping on $\mathcal{L}_{\mathrm{CE}}$ over $\mathcal{D}^{\mathrm{cal}}$ with patience 20, and the best epoch is restored.
+
+\subsection{Fine-tuning along the chain}
+When session $s_t$ enters the chain, its input projection $W_{s_t}$ and read-out $R_{s_t}$ are created, and every other parameter is carried from $s_{t-1}$. The BC-VAE is fine-tuned on $\mathcal{D}^{\mathrm{tr}}_t$, then the decoder on the latents of $\mathcal{D}^{\mathrm{tr}}_t$, each with a new optimizer at the full learning rate and no replay of earlier sessions.
+
+\section{Uncertainty signals}
+\label{app:signals}
+The four signals of Section~\ref{sec:uncertainty-signals} are computed for every window with the model of the current session. The posterior variance is $\bar\nu(x)=\frac1d\sum_j\exp(\log\sigma_j^2(x))$. The predictive entropy uses the natural logarithm. For a differentiable map $g:\mathbb{R}^m\to\mathbb{R}^n$, the Jacobian at $v$ is the matrix $J_g(v)\in\mathbb{R}^{n\times m}$ of first-order partial derivatives,
+\begin{equation}
+  \big[J_g(v)\big]_{p,q}=\frac{\partial g_p(v)}{\partial v_q},\qquad g(v+\Delta v)\approx g(v)+J_g(v)\,\Delta v ,
+\end{equation}
+so its row $p$ gives how output $p$ responds to each input and $J_g(v)\Delta v$ is the first-order change of the output under a small perturbation $\Delta v$. The spectral norm of a matrix $J$ is its largest gain over all perturbation directions,
+\begin{equation}
+  \lVert J\rVert_2=\max_{\Delta v\ne0}\frac{\lVert J\Delta v\rVert_2}{\lVert\Delta v\rVert_2}=\sqrt{\lambda_{\max}\big(J^\top J\big)}=\varsigma_1(J),
+\end{equation}
+where $\lambda_{\max}$ is the largest eigenvalue and $\varsigma_1(J)$ is the largest singular value of $J$, the first of $\varsigma_1\ge\cdots\ge\varsigma_r\ge0$ in its singular value decomposition $J=U\operatorname{diag}(\varsigma_1,\ldots,\varsigma_r)V^\top$ with $r=\min(n,m)$. The maximum is reached when $\Delta v$ is a multiple of the first column of $V$. The spectral norm is therefore the factor by which the worst-case small perturbation of the input is amplified at the output, and every other perturbation satisfies $\lVert J\Delta v\rVert_2\le\varsigma_1(J)\lVert\Delta v\rVert_2$. A Jacobian signal is large for a window where some small change of the input moves the output far.
+
+The Jacobians are computed exactly by automatic differentiation, with the model in evaluation mode. For each window, one backward pass per output coordinate gives one row of the Jacobian (16 passes, since both outputs have 16 dimensions), and $\varsigma_1$ is taken from the singular values of the resulting matrix. Here $\mathcal{J}^{\mathrm{enc}}(x)$ is the spectral norm of the Jacobian of $\mu(x)\in\mathbb{R}^{16}$ with respect to the normalized window $\tilde x\in\mathbb{R}^{L\times N}$ that the encoder reads (written $x$ in the main text), flattened to a $16\times LN$ matrix, and $\mathcal{J}^{\mathrm{align}}(x_i)$ is the spectral norm of the $16\times16$ Jacobian of the aligned latent $\tilde z$ with respect to the last latent $\mu_i$ of the sequence, the earlier latents held fixed. The vector $u(x)=(\mathcal{H}(x),\bar\nu(x),\mathcal{J}^{\mathrm{align}}(x),\mathcal{J}^{\mathrm{enc}}(x))$ is standardized with the mean and the population standard deviation (plus $10^{-8}$) of each signal over $\mathcal{D}^{\mathrm{tr}}_t$, and these statistics are frozen with the scale of that session.
+
+\section{Learned class-conditional split-conformal layer}
+\label{app:conformal}
+
+\subsection{Training the scale}
+Algorithm~\ref{alg:scale} gives the training of $\sigma_\theta$ on one session. Each batch is a uniformly random subset of 512 training windows (fewer if the block is smaller, and a trailing incomplete batch is dropped), and it is split by time. The earlier half of its windows, by position in the session, forms $\mathcal{B}_{\mathrm{q}}$, and the later half forms $\mathcal{B}_{\mathrm{e}}$. The soft threshold $\tilde q_k$ is the empirical quantile with linear interpolation between order statistics, $\tilde q_k=S_{(\lfloor h\rfloor)}+(h-\lfloor h\rfloor)\big(S_{(\lfloor h\rfloor+1)}-S_{(\lfloor h\rfloor)}\big)$ with $h=1+(n_{\mathrm{q},k}-1)(1-\alpha)$ for the $n_{\mathrm{q},k}$ scores of region $k$ in $\mathcal{B}_{\mathrm{q}}$, which is differentiable in $\theta$ through the selected order statistics. A region absent from $\mathcal{B}_{\mathrm{q}}$ receives $\tilde q_k=10^6$, so it is admitted to every set of that step without gradient. The early-stopping loss is $\mathcal{L}_{\mathrm{conformal}}$ over the whole calibration block, split once into its earlier and later halves in the same way.
+
+\begin{algorithm}[!ht]
+  \caption{\textsc{TrainScale}$(\theta_0,\mathcal{D}^{\mathrm{tr}},\mathcal{D}^{\mathrm{cal}},\alpha)$: training the learned scale on one session.}
+  \label{alg:scale}
+  \begin{algorithmic}[1]
+    \Require initial parameters $\theta_0$ (carried from the previous session, or $f_{\theta_0}\equiv0$); decoder outputs $\hat p(x)$, standardized signals $\tilde u(x)$ and labels on $\mathcal{D}^{\mathrm{tr}}$ and $\mathcal{D}^{\mathrm{cal}}$; $\tau=0.05$, $\kappa=20$, patience $P=30$, at most $E=300$ epochs
+    \State $\theta\gets\theta_0$; $\theta^\star\gets\theta_0$; $V^\star\gets\infty$; $\zeta\gets0$
+    \For{$e=1,\ldots,E$}
+      \For{each random batch $\mathcal{B}\subset\mathcal{D}^{\mathrm{tr}}$ of 512 windows}
+        \State $\mathcal{B}_{\mathrm{q}},\mathcal{B}_{\mathrm{e}}\gets$ earlier and later halves of $\mathcal{B}$ in time
+        \State $S(x,k)\gets(1-\hat p_k(x))/\sigma_\theta(x)$ for $x\in\mathcal{B}$, $k\in\mathcal{Y}$
+        \State $\tilde q_k\gets(1-\alpha)$ quantile of $\{S(x_i,y_i):i\in\mathcal{B}_{\mathrm{q}},\,y_i=k\}$ for $k\in\mathcal{Y}$
+        \State $c_k(x)\gets\operatorname{sigmoid}\big((\tilde q_k-S(x,k))/\tau\big)$ for $x\in\mathcal{B}_{\mathrm{e}}$
+        \State $\theta\gets$ Adam step on $\mathcal{L}_{\mathrm{size}}+\kappa\,\mathcal{L}_{\mathrm{coverage}}$ \Comment{Equation~\eqref{loss:conformal}}
+      \EndFor
+      \State $V\gets\mathcal{L}_{\mathrm{conformal}}$ on $\mathcal{D}^{\mathrm{cal}}$, its earlier half for $\tilde q_k$ and its later half for the loss
+      \If{$V<V^\star$} $V^\star\gets V$; $\theta^\star\gets\theta$; $\zeta\gets0$
+      \Else\ $\zeta\gets \zeta+1$; \textbf{if} $\zeta\ge P$ \textbf{then break}
+      \EndIf
+    \EndFor
+    \State \Return $\theta^\star$
+  \end{algorithmic}
+\end{algorithm}
+
+The optimizer is Adam with learning rate $10^{-3}$ and weight decay $10^{-4}$. The scale has $4\cdot32+32+32\cdot32+32+32+1=1{,}249$ parameters. Because the output layer starts at zero, the first session starts from standard class-conditional conformal prediction, and $\sigma_\theta$ moves away from 1 only where the loss improves. The global random state is reset to the run's seed at the start of each training of the scale, sweep branches included, so the next encoder and decoder fine-tune of the chain also starts from that state.
+
+\FloatBarrier
+\subsection{Coverage guarantee}
+\label{app:guarantee}
+For a fixed session $t$ and region $k$ whose threshold is its own, let $(X,Y)$ be a test window with $Y=k$. Because the true label is in the prediction set exactly when $S(X,Y)\le\hat q_{t,Y}$,
+\begin{equation}
+  \mathbb{P}\big(Y\in\widehat{\mathcal{C}}(X)\,\big|\,Y=k\big)=\mathbb{P}\big(S(X,k)\le Q_{1-\alpha}(\mathcal{A}_{t,k})\,\big|\,Y=k\big)\ \ge\ 1-\alpha
+\end{equation}
+whenever the $n_{t,k}$ calibration scores of $\mathcal{A}_{t,k}$ and the test score $S(X,k)$ are exchangeable. Indeed, the rank of the test score among the $n_{t,k}+1$ scores is then uniform on $\{1,\ldots,n_{t,k}+1\}$ (ties broken at random), and the test score is at most the order statistic $S_{(r)}$ of the calibration scores whenever its rank is at most $r$, so the coverage is at least $r/(n_{t,k}+1)\ge1-\alpha$ for $r=\lceil(n_{t,k}+1)(1-\alpha)\rceil$. Without ties, the coverage is also at most $1-\alpha+1/(n_{t,k}+1)$~\cite{angelopoulos2022a}. If every region's threshold is its own, averaging over regions gives
+\begin{equation}
+  \mathbb{P}\big(Y\in\widehat{\mathcal{C}}(X)\big)=\sum_{k}\mathbb{P}(Y=k)\,\mathbb{P}\big(Y\in\widehat{\mathcal{C}}(X)\,\big|\,Y=k\big)\ \ge\ 1-\alpha
+\end{equation}
+for any region distribution of the test block. Class-conditional thresholds therefore keep the target under a change of region frequencies between calibration and test, which a single threshold does not. A borrowed threshold carries the same guarantee only if the pooled scores of the current and previous sessions are exchangeable with the test score, a stronger assumption, and the global fallback carries no per-region guarantee.
+
+The scale does not affect validity as long as it is fixed before calibration, because it is then a fixed function applied identically to calibration and test windows. In this paper, the calibration block also serves for early stopping, so the scores depend slightly on it, and the chronological split places the test windows after the calibration windows, which is the deployment setting the layer is designed for but is not exchangeable in general. The guarantee therefore motivates the design of the layer, and the reported coverage is measured empirically on the later test blocks.
+
+\subsection{Borrowing rule}
+\label{app:pool}
+For $\alpha=0.10$, $Q_{1-\alpha}$ is finite from $\lceil1/\alpha\rceil-1=9$ windows, where it is the largest score, and it stays the largest score up to $2/\alpha-2=18$ windows. The minimum of $\lceil1/\alpha\rceil=10$ windows is the usual rule of thumb, one window above the smallest set with a finite quantile. A past calibration block is re-scored with the current model. The windows of session $s_{t-j}$ pass through the current encoder with $s_{t-j}$'s own input projection, the current decoder, and the current scale with the standardization statistics $(m_t,v_t)$, so that all scores of a pool share one scale. The warm-up sessions' calibration blocks can be borrowed from. Table~\ref{tab:pool} reports the share of test windows whose region threshold was own, borrowed or global, and the coverage for borrowing depths $M\in\{1,3,5\}$. The levels depend only on the calibration labels, so they are identical across seeds. Deeper borrowing reduces the use of the global fallback and slightly raises coverage and set size.
+
+\begin{table}[!ht]
+  \caption{Borrowing depth: share of test windows by threshold level, coverage, normalized set size and mean coverage gap for $M=1,3,5$ (the method uses $M=3$), mean $\pm$ standard deviation across 5 seeds.}
+  \label{tab:pool}
+  \centering\footnotesize
+  \begin{tabular}{@{}l *{7}{c}@{}}
+    \toprule
+    Maze & $M$ & Own & Borrowed & Global & Coverage & $|\widehat{\mathcal{C}}|/K$ & Mean coverage gap \\
+    \midrule
+    Linear Maze & 1 & 0.817 & 0.108 & 0.075 & $0.839\pm0.013$ & $0.784\pm0.017$ & $0.090\pm0.014$ \\
+                & 3 & 0.817 & 0.165 & 0.018 & $0.860\pm0.005$ & $0.814\pm0.010$ & $0.073\pm0.007$ \\
+                & 5 & 0.817 & 0.179 & 0.003 & $0.866\pm0.006$ & $0.824\pm0.011$ & $0.068\pm0.006$ \\
+    \midrule
+    Y Maze      & 1 & 0.666 & 0.167 & 0.167 & $0.819\pm0.016$ & $0.793\pm0.020$ & $0.088\pm0.012$ \\
+                & 3 & 0.666 & 0.289 & 0.045 & $0.859\pm0.019$ & $0.835\pm0.019$ & $0.075\pm0.012$ \\
+                & 5 & 0.666 & 0.300 & 0.035 & $0.865\pm0.019$ & $0.847\pm0.014$ & $0.072\pm0.016$ \\
+    \midrule
+    Loop Maze   & 1 & 0.915 & 0.049 & 0.037 & $0.898\pm0.010$ & $0.827\pm0.019$ & $0.054\pm0.012$ \\
+                & 3 & 0.915 & 0.066 & 0.020 & $0.901\pm0.010$ & $0.851\pm0.020$ & $0.053\pm0.007$ \\
+                & 5 & 0.915 & 0.080 & 0.005 & $0.905\pm0.010$ & $0.856\pm0.023$ & $0.048\pm0.007$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\FloatBarrier
+\subsection{Coverage sweep}
+\label{app:sweep}
+For each tested session and each target $1-\alpha'\in\{0.05,0.10,\ldots,0.95\}\setminus\{0.90\}$, a copy of the scale carried into the session (before its fine-tune) is trained with Algorithm~\ref{alg:scale} at $\alpha'$, the thresholds are computed with Equation~\eqref{rule:borrow} at $\alpha'$, and the test block is evaluated. The 90\% point of the sweep is the deployed model itself. Only the deployed scale is carried to the next session, so the sweep never influences the chain.
+
+\subsection{Constant-scale ablation}
+\label{app:ablation}
+To isolate the learned scale, the chain is also evaluated with a constant scale $\sigma_\theta\equiv1$. The encoder, the decoder, the class-conditional thresholds and the borrowing rule are those of the method, and only the scores change to $1-\hat p_{y}(x)$, on which the thresholds are recomputed. At the 90\% target, the constant scale reaches coverage $0.839\pm0.009$, $0.810\pm0.023$ and $0.856\pm0.025$ in the Linear, Y and Loop Mazes, with normalized set sizes $0.780\pm0.007$, $0.735\pm0.018$ and $0.719\pm0.020$, so its coverage and its sets are both lower than those of the learned scale. Its mean coverage gap is $0.091\pm0.008$, $0.113\pm0.016$ and $0.126\pm0.023$, against $0.073$, $0.075$ and $0.053$ for the method. At the set size of the constant scale, the coverage-sharpness frontier of the learned scale traced by the sweep of Appendix~\ref{app:sweep} (Figure~\ref{fig:operating-curve}) lies 1.2, 3.9 and 7.8 points below the constant scale's coverage. The learned scale therefore brings the deployed coverage closer to the target in every maze by enlarging the prediction sets.
+
+\section{Baseline}
+\label{app:baseline}
+For each tested session $s_t$, the fresh model is a new BC-VAE and decoder with the same architecture, initialized at random, trained from scratch on $\mathcal{D}^{\mathrm{tr}}_t$ with the same losses, KL ramp, budgets and early stopping on $\mathcal{D}^{\mathrm{cal}}_t$. No scale is trained ($\sigma_\theta\equiv1$), and the single threshold is $\hat q_t=Q_{1-\alpha}(\{1-\hat p_{y_i}(x_i):(x_i,y_i)\in\mathcal{D}^{\mathrm{cal}}_t\})$, so the prediction set is $\{k:1-\hat p_k(x)\le\hat q_t\}$, which is standard split-conformal prediction with the score $1-\hat p_y(x)$.
+
+\section{Evaluation metrics}
+\label{app:metrics}
+Let $\mathcal{T}$ be the tested sessions of a maze and $\mathcal{W}=\bigcup_{t\in\mathcal{T}}\mathcal{D}^{\mathrm{test}}_t$ their test windows. Coverage is $\frac{1}{|\mathcal{W}|}\sum_{(x,y)\in\mathcal{W}}\mathbb{1}[y\in\widehat{\mathcal{C}}(x)]$, the normalized size $\frac{1}{|\mathcal{W}|}\sum|\widehat{\mathcal{C}}(x)|/K$, and accuracy $\frac{1}{|\mathcal{W}|}\sum\mathbb{1}[\hat y(x)=y]$. With $\gamma_t$ the coverage of session $t$ on its own test block, the mean coverage gap is $\frac{1}{|\mathcal{T}|}\sum_{t\in\mathcal{T}}|\gamma_t-(1-\alpha)|$. Per-region coverage and size restrict $\mathcal{W}$ to the windows of one true region and are reported only for regions with at least 5 such windows.
+
+The error correlations group the test windows, each group $g$ giving its normalized set size $a_g$, its error rate $b_g$ and its count $n_g$. Groups are the distinct set-size levels. The correlation is the weighted Pearson coefficient
+\begin{equation}
+  \rho=\frac{\sum_g n_g(a_g-\bar a)(b_g-\bar b)}{\sqrt{\sum_g n_g(a_g-\bar a)^2\,\sum_g n_g(b_g-\bar b)^2}},\qquad \bar a=\frac{\sum_g n_g a_g}{\sum_g n_g},\ \bar b=\frac{\sum_g n_g b_g}{\sum_g n_g}.
+\end{equation}
+The sensitivity of the scale to signal $j$ is $\frac{1}{|\mathcal{W}|}\sum_{x\in\mathcal{W}}\big|\partial\log\sigma_\theta(x)/\partial\tilde u_j(x)\big|$, computed with each session's own scale and standardization. Since $\log\sigma_\theta=\operatorname{clip}(f_\theta)$, it is the gradient of $f_\theta$ where the clip is inactive and 0 where it is active. Every metric is computed per seed, and the tables report the mean and the sample standard deviation over the 5 seeds.
+
+\section{Hyperparameters}
+\label{app:hyper}
+Table~\ref{tab:hyper} lists every setting of the experiments. The same values are used for all mazes, all seeds and the fresh baseline.
+
+\begin{table}[!ht]
+  \caption{Hyperparameters.}
+  \label{tab:hyper}
+  \centering\footnotesize
+  \begin{tabular}{@{}l p{0.36\linewidth} p{0.40\linewidth}@{}}
+    \toprule
+    Component & Setting & Value \\
+    \midrule
+    Data & bin width; window length & 100 ms; 10 bins (1 s), non-overlapping \\
+         & split (tested; warm-up) & 60/30/10; 70/30 \\
+         & mouse gate & $\ge2$ sessions with $\ge5$ neurons \\
+         & session gate & $\ge5$ neurons; $\ge20$ task windows in $\ge2$ regions; $\ge50$ calibration and $\ge20$ test windows \\
+         & z-score constant & $10^{-3}$ added to each neuron's standard deviation \\
+         & Linear Maze reward agreement & $\ge80\%$ of a trial's samples within 100 units \\
+    Chain & warm-up sessions $T_0$; borrowing depth $M$ & 3; 3 (sensitivity 1, 5) \\
+          & seeds & 42, 43, 44, 45, 46 \\
+    BC-VAE & latent $d$; projection; GRU hidden; factors & 16; 64; 128 per direction, 2 layers; 32 \\
+           & GRU dropout; generator hidden; classifier & 0.1; 128; $16\to64\to K$, ReLU, dropout 0.2 \\
+           & loss weights $\lambda_{\mathrm{reg}}$; $\beta$; KL ramp & 0.2; 0.5; 10 epochs (from scratch only) \\
+           & optimizer & AdamW, learning rate $10^{-3}$, weight decay $10^{-2}$ (classifier only), cosine \\
+    Decoder & sequence length; width; layers; heads & 5; 64; 2; 4 \\
+            & feed-forward width; classifier & 256; $16\to128\to64\to K$, layer normalization, GELU, dropout 0.2, 0.1 \\
+            & $\lambda_{\mathrm{con}}$; $\tau_c$; dropout & 2; 0.1; 0.1 \\
+            & optimizer & Adam, learning rate $3\cdot10^{-4}$, cosine \\
+    Both steps & batch; epochs; patience; min.\ improvement & 256; 200; 20; $10^{-4}$ \\
+    Scale & MLP & $4\to32\to32\to1$, ReLU, zero-initialized output, clip $[-3,3]$ \\
+          & signal standardization & training-block mean and population standard deviation $+10^{-8}$ \\
+          & $\tau$; $\kappa$; size weight & 0.05; 20; 1 \\
+          & optimizer & Adam, learning rate $10^{-3}$, weight decay $10^{-4}$ \\
+          & batch; epochs; patience & 512; 300; 30 \\
+    Conformal & $\alpha$; own-threshold minimum & 0.10; $\lceil1/\alpha\rceil=10$ windows \\
+              & sweep targets & 5\% to 95\% in steps of 5\% \\
+    \bottomrule
+  \end{tabular}
+\end{table}
 
 \end{document}

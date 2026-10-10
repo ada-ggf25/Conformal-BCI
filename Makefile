@@ -2,15 +2,15 @@ PAPER := paper
 
 .PHONY: setup setup-all setup-python setup-docs setup-latex \
 	paper-test \
-	data-test utils-test models-test conformal-test \
-	src-test docs-test \
+	data-test utils-test models-test conformal-test chain-test \
+	src-test src-coverage docs-test \
 	mkdocs-test mkdocs-build mkdocs-serve \
 	db-test python-lint python-typecheck ci-test \
 	maze maze-quick cross-maze
 
 # First-time setup, in three tiers.
 #
-#   setup-python    python-checks.yml, src-tests.yml, mkdocs.yml
+#   setup-python    python-checks.yml, src-tests.yml, mkdocs.yml, docs-deploy.yml
 #   setup-docs      docs.yml
 #   setup-latex     paper-checks.yml
 #
@@ -36,7 +36,6 @@ setup-latex: setup-docs
 		latexmk \
 		lmodern \
 		texlive-bibtex-extra \
-		texlive-extra-utils \
 		texlive-fonts-recommended \
 		texlive-latex-base \
 		texlive-latex-extra \
@@ -64,7 +63,13 @@ mkdocs-serve:
 # Source unit tests.
 src-test:
 	uv run pytest tests/data/ tests/utils/ tests/models/ \
-	  tests/conformal/ tests/db/ -v -m "not integration"
+	  tests/conformal/ tests/chain/ tests/db/ tests/analyses/ -v -m "not integration"
+
+# Source unit tests with line and branch coverage of src/.
+src-coverage:
+	uv run pytest tests/data/ tests/utils/ tests/models/ \
+	  tests/conformal/ tests/chain/ tests/db/ tests/analyses/ -m "not integration" \
+	  --cov=src --cov-branch --cov-report=term-missing
 
 data-test:
 	uv run pytest tests/data/ -v
@@ -78,6 +83,9 @@ models-test:
 conformal-test:
 	uv run pytest tests/conformal/ -v
 
+chain-test:
+	uv run pytest tests/chain/ -v
+
 db-test:
 	uv run pytest tests/db/ -v -m "not integration"
 
@@ -87,16 +95,16 @@ python-lint:
 	uv run ruff format --check src/ tests/ analyses/
 
 python-typecheck:
-	uv run mypy src/ tests/data tests/utils tests/models tests/conformal tests/db tests/docs analyses/
+	uv run mypy src/ tests/data tests/utils tests/models tests/conformal tests/chain tests/db tests/analyses tests/docs analyses/
 
 # Experimental analysis run.
 # These need .env + a live MongoDB connection and train models:
-#   make maze                          — train the pooled model for all 3 mazes x 5 seeds
+#   make maze                          — run the session chain for all 3 mazes x 5 seeds
 #   make maze PARADIGM=Y_Maze SEEDS=42 — one maze, one seed
 #   make maze-quick                    — 2-epoch smoke run of the plumbing (one seed)
 #   make cross-maze                    — compare every maze that has a saved results bundle
-# per_maze.ipynb pools every usable mouse in a paradigm into one model and writes one bundle
-# per seed to analyses/artifacts/<Paradigm>/ALL_MICE/seed_<k>/. Finished bundles are skipped,
+# per_maze.ipynb trains one session chain over every usable session of a paradigm (all mice,
+# calendar order) and writes one bundle per seed to analyses/artifacts/<Paradigm>/ALL_MICE/seed_<k>/. Finished bundles are skipped,
 # so an interrupted sweep resumes. cross_maze.ipynb reads every seed's bundle and reports
 # mean +- sd across seeds to analyses/artifacts/cross_maze.ipynb.
 PARADIGM ?=

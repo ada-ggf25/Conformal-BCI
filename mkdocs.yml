@@ -2,9 +2,10 @@ site_name: Uncertainty-Aware ML for Neural BCIs
 site_description: >
   Uncertainty-Aware Machine Learning for Long-Term Neural Recordings
   in Flexible Brain–Computer Interfaces
-site_author: Guilherme Grancho
-repo_url: https://github.com/ada-ggf25/ML-Decoding
-repo_name: ada-ggf25/ML-Decoding
+site_author: Guilherme Grancho Duarte Fernandes
+site_url: https://ada-ggf25.github.io/Conformal-BCI/
+repo_url: https://github.com/ada-ggf25/Conformal-BCI
+repo_name: ada-ggf25/Conformal-BCI
 
 edit_uri: edit/main/docs/
 
@@ -44,7 +45,11 @@ markdown_extensions:
       anchor_linenums: true
       line_spans: __span
       pygments_lang_class: true
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.arithmatex:
       generic: true
 
@@ -60,6 +65,9 @@ plugins:
           paths: [.]
           options:
             docstring_style: google
+            docstring_options:
+              # A multi-line Returns section is one description, not one item per line.
+              returns_multiple_items: false
             show_source: true
             show_root_heading: true
             show_root_full_path: false
@@ -73,6 +81,7 @@ plugins:
 
 nav:
   - Home: index.md
+  - The Method: pipeline.md
   - API Reference:
     - Overview: api/index.md
     - Models: api/models.md
@@ -80,6 +89,7 @@ nav:
     - Database: api/db.md
     - Utilities: api/utils.md
     - Conformal: api/conformal.md
+    - Chain: api/chain.md
 
 validation:
   anchors: warn

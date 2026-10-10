@@ -38,11 +38,50 @@ perceptron
 softmax
 variational
 
+quantile
 quantiles
 
+contrastive
+latents
+multiset
+recalibrated
+ReLU
+sigmoid
+
+entorhinal
 electrophysiological
 generalizability
+hippocampal
 
 pageanchor
 TikZMaker
 unsrtnat
+
+# Appendix
+AdamW
+diag
+GELU
+GRU
+Hyperparameters
+Jacobians
+NLL
+TrainScale
+Xent
+accuracies
+logits
+miscoverage
+recalibrates
+rescaled
+softplus
+unnormalized
+
+# Related work
+covariate
+exchangeability
+hyperdimensional
+miscalibrated
+pretrained
+recalibrate
+reweighted
+hyperparameters
+ipynb

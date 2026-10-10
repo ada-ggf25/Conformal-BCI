@@ -5,7 +5,7 @@ TESTS     := tests/paper
 PYTHON := uv run python
 PYTEST  = cd $(REPO_ROOT) && $(PYTHON) -m pytest -vv
 
-.PHONY: all strict latex-test limits-test limits spelling-test ci-test clean wordcount
+.PHONY: all strict latex-test spelling-test hygiene-test ci-test clean
 
 # .latexmkrc sets $aux_dir and $out_dir to build/, so the PDF is build/paper.pdf.
 all:
@@ -17,24 +17,18 @@ strict:
 latex-test:
 	$(PYTEST) $(TESTS)/test_paper_latex.py
 
-limits-test:
-	$(PYTEST) $(TESTS)/test_paper_limits.py
-
-limits: limits-test
-
 spelling-test:
 	$(PYTEST) $(TESTS)/test_paper_spelling.py
 
+hygiene-test:
+	$(PYTEST) $(TESTS)/test_paper_hygiene.py
+
 ci-test:
 	$(MAKE) latex-test
-	$(MAKE) limits-test
 	$(MAKE) spelling-test
+	$(MAKE) hygiene-test
 
 # Remove all build artifacts, including the PDF.
 clean:
 	latexmk -CA -jobname=$(STEM) main.tex
 	rm -rf build/
-
-# Word count using the same inclusion/exclusion rules as the CI test.
-wordcount:
-	cd $(REPO_ROOT) && $(PYTHON) $(TESTS)/test_paper_limits.py

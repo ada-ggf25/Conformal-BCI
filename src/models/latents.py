@@ -1,4 +1,8 @@
-"""Latent extraction utilities for Step 1 and Step 2 inference."""
+"""Latent extraction utilities for Step 1 and Step 2 inference.
+
+Every extractor puts its model in eval mode, runs without gradients in batches, and returns
+one numpy row per input window.
+"""
 
 import numpy as np
 import torch

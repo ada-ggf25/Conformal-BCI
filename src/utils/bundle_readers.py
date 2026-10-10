@@ -1,4 +1,10 @@
-"""Typed readers for the pooled per-maze ``metrics.json`` contract."""
+"""Typed readers for the per-maze chain bundle (``metrics.json`` and ``arrays.npz``).
+
+A bundle here is a loaded ``metrics.json`` dict (``load_maze_bundles``). The section readers
+take one bundle and tolerate missing sections, returning NaN, None or empty lists instead of
+raising; the ``seed_*`` readers take one maze's ``{seed: bundle}`` and aggregate across
+seeds as mean and sample sd.
+"""
 
 from __future__ import annotations
 
@@ -13,17 +19,32 @@ from ..conformal.error_correlation import error_correlations
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-# Name of the deployed method
-_DEPLOYED_ARM = "learned-scale class-conditional"
+from .artifacts import DEPLOYED_ARM as _DEPLOYED_ARM
 
 
 def n_mice(bundle: dict) -> int:
-    """Number of distinct mice in a pooled bundle, from its session names (M<id>_<date>)."""
+    """Number of distinct mice in a pooled bundle, from its session names (M<id>_<date>).
+
+    Args:
+        bundle: a loaded ``metrics.json``.
+
+    Returns:
+        The count of distinct ``M<id>`` prefixes in ``bundle["sessions"]``.
+    """
     return len({s.split("_")[0] for s in bundle.get("sessions", [])})
 
 
 def per_region_coverage_table(bundle: dict) -> dict[str, Any]:
-    """Per-region test coverage and sharpness of the learned scale for a pooled bundle."""
+    """Per-region test coverage and sharpness of the learned scale for a pooled bundle.
+
+    Args:
+        bundle: a loaded ``metrics.json``.
+
+    Returns:
+        ``{"regions", "learned", "n_test", "size_over_k", "target"}``: lists aligned by
+        region in ascending order (coverage and size None for a region with too few test
+        windows), and the coverage target ``1 - alpha``.
+    """
     c = bundle.get("conformal") or {}
     prc = c.get("per_region_coverage") or {}
     lrn = prc.get("learned") or {}
@@ -44,7 +65,15 @@ def per_region_coverage_table(bundle: dict) -> dict[str, Any]:
 
 
 def region_distribution(bundle: dict) -> dict[str, Any]:
-    """Per-region window counts across the entire dataset for a maze."""
+    """Per-region window counts across the entire dataset for a maze.
+
+    Args:
+        bundle: a loaded ``metrics.json``.
+
+    Returns:
+        ``{"regions", "counts", "fraction"}``, aligned by region in ascending order;
+        fractions are NaN when there are no windows.
+    """
     cc = bundle.get("class_counts") or {}
     regions = sorted(cc, key=lambda r: int(r))
     counts = [int(cc[r]) for r in regions]
@@ -58,7 +87,16 @@ def region_distribution(bundle: dict) -> dict[str, Any]:
 
 
 def operating_curves(bundle: dict) -> dict[str, Any]:
-    """Coverage-sharpness frontier for a pooled bundle."""
+    """Coverage-sharpness frontier for a pooled bundle.
+
+    Args:
+        bundle: a loaded ``metrics.json``.
+
+    Returns:
+        ``{"coverage", "size_over_k", "target", "coverage_target", "n_classes"}``: one
+        entry per sweep point, sorted by achieved coverage, plus the deployed target
+        ``1 - alpha`` and K.
+    """
     c = bundle.get("conformal") or {}
     k = int(bundle.get("n_classes") or 0)
     rows = (c.get("retrain_sweep") or {}).get("learned")
@@ -73,7 +111,16 @@ def operating_curves(bundle: dict) -> dict[str, Any]:
 
 
 def whole_test_coverage(bundle: dict) -> dict[str, Any]:
-    """Pooled whole-test coverage and its per-session spread for a pooled bundle."""
+    """Pooled whole-test coverage and its per-session spread for a pooled bundle.
+
+    Args:
+        bundle: a loaded ``metrics.json``.
+
+    Returns:
+        The pooled ``coverage``, ``n_windows``, ``error`` and ``meets_target``; the
+        ``per_session_coverage`` and ``per_session_meets`` lists; ``n_sessions`` and
+        ``n_sessions_below``; and the ``target``.
+    """
     c = bundle.get("conformal") or {}
     tc = c.get("test_coverage") or {}
     wt = tc.get("whole_test") or {}
@@ -96,15 +143,15 @@ def whole_test_coverage(bundle: dict) -> dict[str, Any]:
     }
 
 
-def class_conditional_thresholds(bundle: dict) -> dict[int, float]:
-    """Per-region conformal thresholds (q_hat) for the deployed learned-scale."""
-    arm = ((bundle.get("conformal") or {}).get("arms") or {}).get(_DEPLOYED_ARM) or {}
-    raw = arm.get("q_hat_by_region") or {}
-    return {int(c): (float("inf") if v is None else float(v)) for c, v in raw.items()}
-
-
 def deployed_operating_point(bundle: dict) -> dict[str, float]:
-    """Coverage and normalized set size of the deployed model."""
+    """Coverage and normalized set size of the deployed model.
+
+    Args:
+        bundle: a loaded ``metrics.json``.
+
+    Returns:
+        ``{"coverage", "size_over_k"}``; the size is NaN when it or K is missing.
+    """
     nan = float("nan")
     n_classes = bundle.get("n_classes")
     arm = ((bundle.get("conformal") or {}).get("arms") or {}).get(_DEPLOYED_ARM) or {}
@@ -124,6 +171,9 @@ def seed_values(runs: dict[int, dict], fn: Callable[[dict], Any]) -> list[Any]:
     Args:
         runs: seed -> bundle, one maze's entry of ``load_maze_bundles``.
         fn:   a per-bundle reader.
+
+    Returns:
+        The non-None results, in ascending seed order.
     """
     out = [fn(runs[s]) for s in sorted(runs)]
     return [v for v in out if v is not None]
@@ -134,6 +184,13 @@ def mean_sd(values: Sequence[Any]) -> tuple[np.ndarray, np.ndarray]:
 
     ``values`` is one scalar or one equal-length sequence per seed. The sd is NaN where
     fewer than two seeds have a value, the mean where none has.
+
+    Args:
+        values: one scalar or sequence per seed.
+
+    Returns:
+        ``(mean, sd)`` arrays, one element per position (a single element for scalars;
+        ``[nan]`` each when ``values`` is empty).
     """
     rows = [
         np.array([np.nan if v is None else v for v in np.atleast_1d(x)], dtype=float)
@@ -202,6 +259,9 @@ def maze_summary_table(mazes: dict, order: Sequence[str]) -> list[dict[str, Any]
 def seed_session_coverage(runs: dict[int, dict]) -> dict[str, Any]:
     """Per-session test coverage averaged over seeds, matched by session name.
 
+    Args:
+        runs: seed -> bundle, one maze's entry of ``load_maze_bundles``.
+
     Returns:
         ``{"sessions", "coverage", "meets", "target"}``: one entry per session, ``meets``
         being the seed-mean coverage at or above the target.
@@ -222,11 +282,79 @@ def seed_session_coverage(runs: dict[int, dict]) -> dict[str, Any]:
     }
 
 
+def seed_method_table(
+    runs: dict[int, dict],
+    group: str = "all",
+    fields: Sequence[str] = ("coverage", "size_over_k", "accuracy", "mean_abs_gap"),
+) -> dict[str, dict[str, tuple[float, float]]]:
+    """Every method's results for a session group, as (mean, sd) across seeds.
+
+    Args:
+        runs:   seed -> bundle, one maze's entry of ``load_maze_bundles``.
+        group:  ``"all"``, ``"returning"`` or ``"first"``.
+        fields: which ``method_table`` fields to aggregate.
+
+    Returns:
+        ``{method: {field: (mean, sd)}}``; the sd is NaN with a single seed.
+    """
+    tables = seed_values(runs, lambda m: method_table(m, group) or None)
+    out: dict[str, dict[str, tuple[float, float]]] = {}
+    for method in tables[0] if tables else []:
+        out[method] = {}
+        for f in fields:
+            mean, sd = mean_sd([t[method][f] for t in tables if method in t])
+            out[method][f] = (float(mean[0]), float(sd[0]))
+    return out
+
+
+def seed_per_session_table(runs: dict[int, dict]) -> dict[str, Any]:
+    """The deployed method per tested session, mean and sd across seeds, in chain order.
+
+    Sessions are matched by name. The first-session flag and the neuron count do not depend on
+    the seed and come from the first seed.
+
+    Args:
+        runs: seed -> bundle, one maze's entry of ``load_maze_bundles``.
+
+    Returns:
+        ``{"sessions", "coverage", "coverage_sd", "accuracy", "accuracy_sd",
+        "first_of_mouse", "n_neurons", "target"}``.
+    """
+    first = per_session_table(runs[min(runs)])
+    names = [r["session"] for r in first]
+    by_seed = [
+        {r["session"]: r for r in per_session_table(runs[s])} for s in sorted(runs)
+    ]
+
+    def _field(fn: Callable[[dict], float]) -> tuple[list, list]:
+        """Mean and sd across seeds of ``fn`` per session, None where a seed lacks it."""
+        mean, sd = mean_sd(
+            [[fn(t[n]) if n in t else None for n in names] for t in by_seed]
+        )
+        return mean.tolist(), sd.tolist()
+
+    cov, cov_sd = _field(lambda r: r["coverage"])
+    acc, acc_sd = _field(lambda r: 1.0 - r["error"])
+    return {
+        "sessions": names,
+        "coverage": cov,
+        "coverage_sd": cov_sd,
+        "accuracy": acc,
+        "accuracy_sd": acc_sd,
+        "first_of_mouse": [bool(r["first_of_mouse"]) for r in first],
+        "n_neurons": [r["n_neurons"] for r in first],
+        "target": whole_test_coverage(runs[min(runs)])["target"],
+    }
+
+
 def seed_operating_curves(runs: dict[int, dict]) -> dict[str, Any]:
     """The retrained coverage-sharpness sweep, mean and sd over seeds, per target.
 
     Seeds are matched by coverage target (every seed sweeps the same grid). A target
     missing from a seed counts as missing, not as zero.
+
+    Args:
+        runs: seed -> bundle, one maze's entry of ``load_maze_bundles``.
 
     Returns:
         ``{"target", "coverage", "coverage_sd", "size_over_k", "size_over_k_sd",
@@ -236,6 +364,7 @@ def seed_operating_curves(runs: dict[int, dict]) -> dict[str, Any]:
     targets = sorted({t for oc in per_seed for t in oc["target"]})
 
     def _aligned(key: str) -> list[list[float]]:
+        """Each seed's ``key`` values on the shared target grid, NaN where missing."""
         out = []
         for oc in per_seed:
             by_t = dict(zip(oc["target"], oc[key], strict=True))
@@ -253,36 +382,70 @@ def seed_operating_curves(runs: dict[int, dict]) -> dict[str, Any]:
 
 
 def error_correlations_for_bundle(bundle: dict) -> dict | None:
-    """``error_correlations`` over a pooled bundle's saved test windows.
+    """``error_correlations`` over a chain bundle's test windows (the deployed method).
 
     Reads ``_arrays_path``, which ``load_maze_bundles`` injects below.
 
+    Args:
+        bundle: a bundle from ``load_maze_bundles``.
+
     Returns:
-        The ``error_correlations`` dict, or ``None`` if the bundle has no arrays, no
-        finite per-region thresholds, or no recorded class count.
+        The ``error_correlations`` dict, or ``None`` if the bundle has no arrays.
     """
     arr_path = bundle.get("_arrays_path")
-    qhats = class_conditional_thresholds(bundle)
-    if arr_path is None or not qhats or not bundle.get("n_classes"):
+    if arr_path is None:
         return None
-
     arrs = np.load(arr_path)
-    test_mask = arrs["win_split"] == 2
+    main = f"chain_{(bundle.get('conformal') or {}).get('rule', 'B3')}"
     return error_correlations(
-        arrs["win_probs"][test_mask],
-        arrs["win_sigma"][test_mask],
-        arrs["win_region"][test_mask],
-        qhats,
+        arrs[f"win_size_over_k_{main}"],
+        arrs[f"win_error_{main}"],
+        arrs["win_sigma_rel"],
     )
 
 
+def method_table(bundle: dict, group: str = "all") -> dict[str, dict[str, Any]]:
+    """Every method's pooled results for a session group.
+
+    Args:
+        bundle: a loaded ``metrics.json``.
+        group:  ``"all"``, ``"returning"`` or ``"first"``.
+
+    Returns:
+        ``{method: method_summary}`` (``coverage``, ``size_over_k``, ``accuracy``,
+        ``mean_abs_gap``, ...), or ``{}`` if the group is absent.
+    """
+    return ((bundle.get("conformal") or {}).get("methods") or {}).get(group) or {}
+
+
+def per_session_table(bundle: dict) -> list[dict[str, Any]]:
+    """The deployed method's per-session rows, in chain order.
+
+    Args:
+        bundle: a loaded ``metrics.json``.
+
+    Returns:
+        The rows of ``conformal.test_coverage.per_session``, or an empty list.
+    """
+    tc = (bundle.get("conformal") or {}).get("test_coverage") or {}
+    return list(tc.get("per_session") or [])
+
+
 def _load_bundle(metrics_path: Path) -> dict:
-    """One bundle's ``metrics.json`` plus the paths of its saved arrays and scale net."""
+    """One bundle's ``metrics.json`` plus the paths of its saved arrays and sigma nets.
+
+    Args:
+        metrics_path: path of the bundle's ``metrics.json``.
+
+    Returns:
+        The parsed metrics with ``_arrays_path`` and ``_sigma_nets_path`` added (None when
+        the file is absent).
+    """
     m = json.loads(metrics_path.read_text())
     d = metrics_path.parent
     m["_arrays_path"] = (d / "arrays.npz") if (d / "arrays.npz").exists() else None
-    m["_scale_net_path"] = (
-        (d / "scale_net.pt") if (d / "scale_net.pt").exists() else None
+    m["_sigma_nets_path"] = (
+        (d / "sigma_nets.pt") if (d / "sigma_nets.pt").exists() else None
     )
     return m
 
@@ -295,9 +458,10 @@ def load_maze_bundles(
 ) -> tuple[dict, list[str]]:
     """Load every per-seed bundle under ``<artifacts_dir>/<Paradigm>/ALL_MICE/seed_<k>/``.
 
-    A maze with no ``seed_<k>`` directories falls back to a single bundle directly under
-    ``ALL_MICE/`` (the layout before seed sweeps), keyed by its recorded seed or, for bundles
-    that predate the ``seed`` field, by 42, the notebook's default.
+    Only chain bundles are read: a bundle directly under ``ALL_MICE/`` (the pooled layout
+    before the session chain) is ignored, and so is a bundle without
+    ``conformal.test_coverage``. A bundle is filed under its recorded ``paradigm``,
+    falling back to its directory name.
 
     Args:
         artifacts_dir: the ``analyses/artifacts`` directory.
@@ -311,10 +475,7 @@ def load_maze_bundles(
     artifacts_dir = Path(artifacts_dir)
     mazes: dict = {}
     for cohort_dir in sorted(artifacts_dir.glob("*/ALL_MICE")):
-        paths = sorted(cohort_dir.glob("seed_*/metrics.json"))
-        if not paths and (cohort_dir / "metrics.json").exists():
-            paths = [cohort_dir / "metrics.json"]
-        for mf in paths:
+        for mf in sorted(cohort_dir.glob("seed_*/metrics.json")):
             m = _load_bundle(mf)
             if "test_coverage" not in (m.get("conformal") or {}):
                 if log_fn is not None:
@@ -322,7 +483,7 @@ def load_maze_bundles(
                         f"  skip {mf.parent}: bundle missing conformal.test_coverage"
                     )
                 continue
-            seed = int(m.get("seed", 42))
+            seed = int(m["seed"])
             mazes.setdefault(m.get("paradigm", cohort_dir.parent.name), {})[seed] = m
     order = [p for p in maze_order if p in mazes] + [
         p for p in sorted(mazes) if p not in maze_order

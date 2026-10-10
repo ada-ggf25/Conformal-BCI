@@ -1,9 +1,12 @@
-"""Jacobian strain computation for the AlignmentDecoder alignment map.
+"""Jacobian strain computation for the AlignmentDecoder alignment map and the BC-VAE encoder.
 
 For each latent sequence z_seq = [z_{t-k}, ..., z_t], the alignment strain is:
 
     J_t(z) = d f_align(z_seq) / d z_t     shape: (latent_dim, latent_dim)
     ||J_t(z)||_2 = sigma_max(J_t(z))      the ``align_jacobian`` signal
+
+The encoder strain is the same quantity for the Step 1 map from a window x to its posterior
+mean: ||d mu / d x||_2, the ``enc_jacobian`` signal.
 """
 
 from __future__ import annotations
@@ -21,7 +24,20 @@ if TYPE_CHECKING:
 def _top_singular_value(
     outputs: torch.Tensor, inputs: torch.Tensor, device: torch.device
 ) -> np.ndarray:
-    """Largest singular value of d outputs / d inputs, per row of the batch."""
+    """Largest singular value of d outputs / d inputs, per row of the batch.
+
+    Builds each row's Jacobian one output coordinate at a time. Summing an output column
+    over the batch before differentiating gives every row's own gradient at once, because
+    rows do not interact in the forward pass (eval mode).
+
+    Args:
+        outputs: (b, out_dim) outputs, still attached to the graph of ``inputs``.
+        inputs:  (b, ...) leaf tensor with ``requires_grad``; flattened per row.
+        device:  device to build the Jacobian on.
+
+    Returns:
+        (b,) spectral norm of each row's (out_dim, input size) Jacobian.
+    """
     b, out_dim = outputs.shape
     jac = torch.zeros(b, out_dim, inputs[0].numel(), device=device)
     for j in range(out_dim):
@@ -50,6 +66,7 @@ def compute_spectral_norms(
     Args:
         model:      trained AlignmentDecoder, put in eval mode internally
         z_seqs:     (N, seq_len, latent_dim) numpy array or float32 tensor
+        device:     device for the forward and backward passes
         batch_size: sequences processed in one backward-pass group
 
     Returns:
@@ -67,6 +84,7 @@ def compute_spectral_norms(
             end = min(start + batch_size, n)
             batch = z_seqs[start:end].to(device)  # (B, seq_len, latent_dim)
 
+            # Only the last latent is a differentiation input; the context is held fixed.
             z_context = batch[:, :-1, :].detach()  # (B, seq_len-1, latent_dim)
             z_last = batch[:, -1, :].detach().requires_grad_(True)  # (B, latent_dim)
 
@@ -96,6 +114,7 @@ def compute_encoder_spectral_norms(
         windows:      (N, window_size, n_neurons) float32 array or tensor (the same
                       normalized windows the encoder consumes).
         session_name: session key for the encoder's per-session projection.
+        device:       device for the forward and backward passes.
         batch_size:   windows processed in one backward-pass group.
 
     Returns:
