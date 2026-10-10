@@ -100,7 +100,7 @@ The paper's LaTeX source is in [`paper/`](paper/README.md).
 ## Repository Structure
 
 ```text
-ML-Decoding/                 # repository root
+conformal-neural-decoding/   # repository root
 ├── Makefile                 # setup, test, documentation, and analysis targets
 ├── LICENSE                  # Apache License 2.0
 ├── NOTICE                   # copyright notice and what the license does not cover
@@ -163,7 +163,7 @@ The committed notebooks are executed, so their outputs can be read without the d
 
 ## Documentation
 
-The project documentation is an MkDocs site built from `docs/` and configured by `mkdocs.yml`, published at <https://ada-ggf25.github.io/ML-Decoding/>. It is rebuilt and deployed to GitHub Pages every time a pull request that changes it is merged into `main`.
+The project documentation is an MkDocs site built from `docs/` and configured by `mkdocs.yml`, published at <https://ada-ggf25.github.io/conformal-neural-decoding/>. It is rebuilt and deployed to GitHub Pages every time a pull request that changes it is merged into `main`.
 
 ```bash
 make mkdocs-serve   # preview the documentation locally

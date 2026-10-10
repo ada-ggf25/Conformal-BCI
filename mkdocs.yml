@@ -3,9 +3,9 @@ site_description: >
   Uncertainty-Aware Machine Learning for Long-Term Neural Recordings
   in Flexible Brain–Computer Interfaces
 site_author: Guilherme Grancho Duarte Fernandes
-site_url: https://ada-ggf25.github.io/ML-Decoding/
-repo_url: https://github.com/ada-ggf25/ML-Decoding
-repo_name: ada-ggf25/ML-Decoding
+site_url: https://ada-ggf25.github.io/conformal-neural-decoding/
+repo_url: https://github.com/ada-ggf25/conformal-neural-decoding
+repo_name: ada-ggf25/conformal-neural-decoding
 
 edit_uri: edit/main/docs/
 
