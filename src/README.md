@@ -10,17 +10,19 @@ src/
 ├── db/          # MongoDB connection
 ├── models/      # BC-VAE encoder, Transformer alignment decoder, training loops, decoder metrics
 ├── utils/       # data discovery, chronological splits, pipeline assembly, results bundles
-└── conformal/   # Learned class-conditional split-conformal layer
+├── conformal/   # Learned class-conditional split-conformal layer
+└── chain/       # Session-by-session chain, calibration rules, and evaluation
 ```
 
 ## CI tests
 
 ```bash
 make python-lint   # ruff lint + format check over src/, tests/ and analyses/ (both .py and .ipynb)
-make src-test       # all five suites below, in one pytest process (what CI runs)
+make src-test       # all six suites below, in one pytest process (what CI runs)
 make data-test      # tests/data/
 make utils-test     # tests/utils/
 make models-test    # tests/models/
 make conformal-test # tests/conformal/
 make db-test        # tests/db/ — offline, the MongoDB client is mocked
+make chain-test     # tests/chain/
 ```

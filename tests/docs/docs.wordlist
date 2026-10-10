@@ -1,6 +1,8 @@
 # Accepted words for American English spell-checking of project documentation.
 
 Davison
+Duarte
+Fernandes
 Grancho
 Guilherme
 Hao
@@ -17,7 +19,9 @@ VAE
 BCIs
 PDFs
 
+arXiv
 mypy
+recalibrated
 regenerable
 reproducibility
 Subpackage

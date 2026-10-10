@@ -15,7 +15,7 @@ flowchart LR
     U --> SIG["learned scale<br/>sigma(x)"]
     P --> C["scores and per-region<br/>thresholds"]
     SIG --> C
-    C --> T["trust region<br/>C(x)"]
+    C --> T["prediction set<br/>C(x)"]
 ```
 
 ## 1. Recordings, windows and regions
@@ -28,7 +28,7 @@ Each session is a sequence of trials stored in MongoDB (`src.db`). Spike times a
 
 ![Firing rates of the most active neurons over the first 30 seconds of a session](readme-images/encoder-input-example.png){ width="820" }
 
-*The first 30 seconds of a Linear maze session (mouse 19, 2024-09-18). The highlighted interval is one 1 s input window.*
+*Firing rates over 30 seconds of the first trial of a Linear maze session, from the trial's first spike. The highlighted interval is one 1 s input window.*
 
 Only **task windows** enter training and evaluation: windows that lie entirely inside a trial whose status is `W` (`window_task_mask`). Each window is labeled with a maze **region**, one of \(K\) discrete classes, defined per maze by `src.data.regions`:
 
@@ -97,7 +97,7 @@ The two Jacobian norms are largest singular values, computed by `src.conformal.s
 S(x, k) = \frac{1 - \hat p_k(x)}{\sigma_\theta(x)}.
 \]
 
-A large \(\sigma_\theta(x)\) shrinks every score of that window, so more regions clear their thresholds and the trust region grows. With \(\sigma_\theta \equiv 1\) the method is standard split conformal.
+A large \(\sigma_\theta(x)\) shrinks every score of that window, so more regions clear their thresholds and the prediction set grows. With \(\sigma_\theta \equiv 1\) the method is standard split conformal.
 
 **The scale.** \(\sigma_\theta\) is a small MLP (`ScaleNet`, 2 hidden layers of 32 units) on the standardized signals. Its output is \(\exp\) of a pre-activation clamped to \([-3, 3]\). The last layer starts at zero, so training starts from \(\sigma_\theta = 1\) exactly. `train_scale` fits it on the training block with a smooth version of the conformal procedure. Each batch is halved in time: the earlier half gives per-region soft quantiles \(\tilde q_k\), and on the later half a region's set membership is \(\operatorname{sigmoid}\big((\tilde q_k - S(x,k))/\tau\big)\) with \(\tau = 0.05\). The loss is
 
@@ -115,7 +115,7 @@ the mean soft set size plus the coverage shortfall averaged over the regions \(R
 
 Borrowed blocks are re-scored with the current session's model and scale, so every pooled score comes from the same model. Test blocks are never pooled.
 
-**The trust region.** A test window's prediction set holds every region whose score clears its threshold (`class_conditional_prediction_sets`):
+**The prediction set.** A test window's prediction set holds every region whose score clears its threshold (`class_conditional_prediction_sets`):
 
 \[
 \widehat{\mathcal{C}}(x) = \{\, k : S(x, k) \le \hat q_k \,\}.
@@ -136,7 +136,7 @@ It can hold several regions or none.
 
 For each method and test window, the run records whether the set covers the true region, the normalized set size \(|\widehat{\mathcal{C}}|/K\), the decoder's error, and whether the threshold was own, borrowed or global. The **coverage sweep** repeats the deployed method for 19 coverage targets from 5% to 95%. Each target other than 90% fine-tunes its own scale from the carried one. The 90% point is the deployed model itself.
 
-`build_chain_bundle` pools these over the test windows of every tested session, and of the first-session and returning groups. It reports coverage against the 90% target, \(|\widehat{\mathcal{C}}|/K\), accuracy, the mean per-session gap to the target, and the share of each threshold level. Two readers go further:
+`build_chain_bundle` pools these over the test windows of every tested session, and of the first-session and returning groups. It reports coverage against the 90% target, \(|\widehat{\mathcal{C}}|/K\), accuracy, the mean coverage gap (the mean over sessions of \(|\text{coverage} - 0.90|\)), and the share of each threshold level. Two readers go further:
 
 - `error_correlations` checks whether the uncertainty signals track errors. It groups test windows by set size, or into 10 equal-count bins of \(\sigma_\theta\) relative to its session's median. Pearson's \(r\) between each group's mean value and its error rate is then weighted by group size.
 - `signal_sensitivity` measures how much each signal drives the scale, as the mean \(\lvert \partial \log \sigma_\theta / \partial z \rvert\) per standard deviation of the signal.

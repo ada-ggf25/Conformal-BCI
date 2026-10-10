@@ -1,11 +1,10 @@
 # Uncertainty-Aware ML for Neural BCIs
 
-**Author:** Guilherme Grancho.
-**Lab:** Liu Lab, Harvard John A. Paulson School of Engineering and Applied Sciences.
+This site documents the code of the paper *Keeping Neural Decoders Calibrated Session by Session with Learned Class-Conditional Conformal Prediction*, by Guilherme Grancho Duarte Fernandes, Hao Shen, Tianshu Tan, Tom Davison and Jia Liu (Harvard John A. Paulson School of Engineering and Applied Sciences and Imperial College London).
 
 ---
 
-Neural drift degrades brain–computer interface decoders over time, and measuring how much it hurts normally needs fresh labeled data, which is expensive to collect. This project studies a label-free alternative. A decoder predicts which maze region a mouse occupies from its neural activity, and a learned conformal layer turns each prediction into a *trust region*: a set of plausible regions, sized to contain the true one 90% of the time. The size of the set, and the learned scale behind it, then act as uncertainty signals that need no new labels.
+Neural drift degrades brain–computer interface decoders over time, and at inference time the decoder's predictions arrive without labels, so that decline cannot be measured as it happens. This project studies a label-free reliability measure. A decoder predicts which maze region a mouse occupies from its neural activity, and a learned conformal layer, calibrated on labeled data recorded earlier in the session, turns each prediction into a *prediction set*: a set of plausible regions, sized to contain the true one 90% of the time. The size of the set then measures the decoder's reliability at inference time, without new labels.
 
 The data are electrophysiological recordings from flexible brain probes in mice navigating virtual-reality mazes. This site documents the `src` package that implements the method.
 
@@ -16,7 +15,7 @@ For each maze, one model is carried across every usable session of every mouse, 
 1. **Data.** Spikes and positions are read from MongoDB, binned at 0.1 s, cut into 1 s windows, and each window is labeled with the maze region the animal was in.
 2. **Decoder.** A behavior-constrained variational autoencoder (BC-VAE) encodes each window into a latent. A Transformer alignment decoder reads a short sequence of latents and predicts the region.
 3. **Uncertainty signals.** Four per-window signals describe how uncertain the pipeline is. They are the prediction's entropy, the encoder's posterior variance, and the sensitivity (Jacobian norm) of the encoder and of the alignment map.
-4. **Conformal layer.** A small network turns the signals into a scale \(\sigma_\theta(x)\) that loosens or tightens each window's threshold. Per-region thresholds calibrated on held-out windows then produce the trust region.
+4. **Conformal layer.** A small network turns the signals into a scale \(\sigma_\theta(x)\) that loosens or tightens each window's threshold. Per-region thresholds calibrated on held-out windows then produce the prediction set.
 5. **Session chain.** Each session fine-tunes the carried model on its own first 60%, calibrates on the next 30%, and is tested on its final 10%.
 
 [The method](pipeline.md) walks through every step with its equations and settings. The [API reference](api/index.md) documents every module, class and function.
