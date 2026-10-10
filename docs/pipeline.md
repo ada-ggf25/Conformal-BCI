@@ -28,17 +28,17 @@ Each session is a sequence of trials stored in MongoDB (`src.db`). Spike times a
 
 ![Firing rates of the most active neurons over the first 30 seconds of a session](readme-images/encoder-input-example.png){ width="820" }
 
-*Firing rates over 30 seconds of the first trial of a Linear maze session, from the trial's first spike. The highlighted interval is one 1 s input window.*
+*Firing rates over 30 seconds of the first trial of a Linear Maze session, from the trial's first spike. The highlighted interval is one 1 s input window.*
 
 Only **task windows** enter training and evaluation: windows that lie entirely inside a trial whose status is `W` (`window_task_mask`). Each window is labeled with a maze **region**, one of \(K\) discrete classes, defined per maze by `src.data.regions`:
 
 | Maze | Paradigm key | Regions \(K\) | How a position maps to a region |
 |---|---|---|---|
-| Linear | `More_Water` | 8 | Eight equal segments of the run from the start to the trial's water reward |
-| Y maze | `Y_Maze` | 8 | Fixed cuts along the stem, then along each arm by the sign of `x` |
-| Loop (Nested) | `Nested_All` | 9 | Fixed cuts; pools the `Nested_Maze` and `Nested_Maze+2` blocks |
+| Linear Maze | `More_Water` | 8 | Eight equal segments of the run from the start to the trial's water reward |
+| Y Maze | `Y_Maze` | 8 | Fixed cuts along the stem, then along each arm by the sign of `x` |
+| Loop Maze | `Nested_All` | 9 | Fixed cuts; pools the `Nested_Maze` and `Nested_Maze+2` blocks |
 
-In the Linear maze the regions follow the reward. `trial_water_position` finds each trial's water position from the behavior channels, and a trial without one stable position has no regions; its windows are left out. The production recipe labels a window by the **modal** region of its bins and drops windows that **straddle** a region boundary (`apply_window_region_labels`), since their label is ambiguous.
+In the Linear Maze the regions follow the reward. `trial_water_position` finds each trial's water position from the behavior channels, and a trial without one stable position has no regions; its windows are left out. The production recipe labels a window by the **modal** region of its bins and drops windows that **straddle** a region boundary (`apply_window_region_labels`), since their label is ambiguous.
 
 `assemble_session_data` keeps a session only if it has at least 5 neurons, 20 task windows and 2 distinct regions. Every neuron is treated as specific to its session: neuron identities are not matched across sessions.
 
@@ -66,7 +66,7 @@ For each session in order, `ChainModel.fit` fine-tunes the model carried from th
 \mathcal{L}_1 = \mathrm{NLL}_{\text{Poisson}}(x_{\text{raw}}) + 0.2\,\mathrm{CE}(\text{region}) + w_{\text{KL}}\,\mathrm{KL}\big(q(z \mid x)\,\|\,\mathcal{N}(0, I)\big),
 \]
 
-where the reconstruction target is the unnormalized binned activity and the cross-entropy is unweighted: every window counts equally, so training optimizes raw accuracy, the reported metric (`CLASS_WEIGHTS = False`; turned on, both steps weight their cross-entropy by inverse region frequency). \(w_{\text{KL}}\) ramps linearly to 0.5 over the first 10 epochs, and only when training from scratch; a fine-tune uses the full weight at once.
+where the reconstruction target is the unnormalized binned activity and the cross-entropy is unweighted: every window counts equally, so training optimizes raw accuracy, the reported metric. \(w_{\text{KL}}\) ramps linearly to 0.5 over the first 10 epochs, and only when training from scratch; a fine-tune uses the full weight at once.
 
 **Step 2, the alignment decoder** (`AlignmentDecoder`). The encoder is frozen and each window is represented by its posterior mean. The decoder reads the means of the window and the 4 windows before it, front-padded at the session start. It passes them through a Transformer encoder and returns an aligned latent, which a classifier head turns into region probabilities \(\hat p(x) \in \Delta^{K-1}\). `train_step2` minimizes
 
@@ -74,7 +74,7 @@ where the reconstruction target is the unnormalized binned activity and the cros
 \mathcal{L}_2 = \mathrm{CE}(\text{region}) + 2\,\mathcal{L}_{\text{NT-Xent}},
 \]
 
-a contrastive term that pulls together windows of the same region and gives pairs from different sessions double weight (`compute_contrastive_loss`). Early stopping tracks the calibration-block cross-entropy alone.
+a contrastive term that pulls together windows of the same region within a training batch (`compute_contrastive_loss`). The loss gives pairs from different sessions double weight, but in the chain every training batch comes from the current session, so all pairs weigh the same. Early stopping tracks the calibration-block cross-entropy alone.
 
 ## 4. The uncertainty signals
 
@@ -107,7 +107,7 @@ A large \(\sigma_\theta(x)\) shrinks every score of that window, so more regions
 
 the mean soft set size plus the coverage shortfall averaged over the regions \(R\) present in the batch, with \(\kappa = 20\). In the chain, each session fine-tunes the previous session's \(\sigma_\theta\), early-stopped on its calibration block.
 
-**The thresholds.** For \(n\) calibration scores and miscoverage \(\alpha = 0.1\), `compute_quantile` returns the score of rank \(\lceil (n+1)(1-\alpha) \rceil\) in increasing order, or \(+\infty\) when that rank exceeds \(n\). If calibration and test windows are exchangeable, a test score falls at or below it with probability at least \(1-\alpha\). The method calibrates one threshold \(\hat q_k\) per region from the true-class scores of that region's calibration windows. Rule **B3** decides which windows those are (`pooled_qhats`):
+**The thresholds.** For \(n\) calibration scores and miscoverage \(\alpha = 0.1\), `compute_quantile` returns the score of rank \(\lceil (n+1)(1-\alpha) \rceil\) in increasing order, or \(+\infty\) when that rank exceeds \(n\). If calibration and test windows are exchangeable, a test score falls at or below it with probability at least \(1-\alpha\). The method calibrates one threshold \(\hat q_k\) per region from the true-class scores of that region's calibration windows. The borrowing rule, with depth 3 (named `B3` in the code), decides which windows those are (`pooled_qhats`):
 
 1. **own:** the session's own calibration block, if it has at least \(\lceil 1/\alpha \rceil = 10\) windows of the region;
 2. **borrowed:** otherwise, the own block pooled with the calibration blocks of the 3 previous sessions, if the pool has at least 10;
@@ -129,10 +129,10 @@ It can hold several regions or none.
 
 | Method | What differs |
 |---|---|
-| `chain_B3` | the deployed method |
-| `chain_B1`, `chain_B5` | the same model with borrowing depth 1 or 5, a sensitivity analysis of the pool rule |
-| `chain_sigma1` | the same model with \(\sigma_\theta \equiv 1\), an ablation of the learned scale |
-| `fresh` | a new model trained from scratch on this session alone, with one global threshold (standard split conformal) |
+| `chain_B3` | the deployed method, reported as "Method" in the paper |
+| `chain_B1`, `chain_B5` | the same model with borrowing depth 1 or 5, the paper's borrowing-depth sensitivity analysis |
+| `chain_sigma1` | the same model with \(\sigma_\theta \equiv 1\), the paper's constant-scale ablation |
+| `fresh` | a new model trained from scratch on this session alone, with one global threshold (standard split conformal), the paper's baseline |
 
 For each method and test window, the run records whether the set covers the true region, the normalized set size \(|\widehat{\mathcal{C}}|/K\), the decoder's error, and whether the threshold was own, borrowed or global. The **coverage sweep** repeats the deployed method for 19 coverage targets from 5% to 95%. Each target other than 90% fine-tunes its own scale from the carried one. The 90% point is the deployed model itself.
 
@@ -151,4 +151,4 @@ Each (maze, seed) run of `analyses/per_maze.ipynb` writes one bundle to `analyse
 | `arrays.npz` | one row per tested window: its session, region, probabilities, scale, relative scale, threshold level, the four signals, and each method's coverage, size and error; its index within its session, and its coverage and size at every sweep target; every calibration score the deployed model used (the session's own block and the re-scored past blocks), so any calibration rule can be recomputed offline; and the windows every session's scale was trained and calibrated on (probabilities, signals, regions), so another scale can be trained offline on the same decoder outputs |
 | `sigma_nets.pt` | every tested session's scale network and signal statistics |
 
-`src.utils.bundle_readers` reads bundles back and aggregates them across seeds as mean and standard deviation, which is what `analyses/cross_maze.ipynb` plots.
+`src.utils.bundle_readers` reads bundles back and aggregates them across seeds as mean and standard deviation, which is what `analyses/cross_maze.ipynb` plots. The paper's tables and figures come from that notebook, run over the bundles of all three mazes and seeds 42 to 46. The committed copies of both notebooks are executed, so their outputs can be read without the data.

@@ -1,4 +1,4 @@
-# Uncertainty-Aware ML for Neural BCIs
+# Conformal-BCI
 
 This site documents the code of the [Conformal-BCI repository](https://github.com/ada-ggf25/Conformal-BCI) for the paper *Keeping Neural Decoders Calibrated Session by Session with Learned Class-Conditional Conformal Prediction*.
 
@@ -15,8 +15,8 @@ For each maze, one model is carried across every usable session of every mouse, 
 1. **Data.** Spikes and positions are read from MongoDB, binned at 0.1 s, cut into 1 s windows, and each window is labeled with the maze region the animal was in.
 2. **Decoder.** A behavior-constrained variational autoencoder (BC-VAE) encodes each window into a latent. A Transformer alignment decoder reads a short sequence of latents and predicts the region.
 3. **Uncertainty signals.** Four per-window signals describe how uncertain the pipeline is. They are the prediction's entropy, the encoder's posterior variance, and the sensitivity (Jacobian norm) of the encoder and of the alignment map.
-4. **Conformal layer.** A small network turns the signals into a scale \(\sigma_\theta(x)\) that loosens or tightens each window's threshold. Per-region thresholds calibrated on held-out windows then produce the prediction set.
-5. **Session chain.** Each session fine-tunes the carried model on its own first 60%, calibrates on the next 30%, and is tested on its final 10%.
+4. **Conformal layer.** A small network turns the signals into a scale \(\sigma_\theta(x)\) that loosens or tightens each window's threshold. One threshold per region, calibrated on the session's calibration block and borrowing from the most recent sessions for rare regions, then produces the prediction set.
+5. **Session chain.** Each session fine-tunes the carried model on its own first 60%, calibrates on the next 30%, and is tested on its final 10%, where the layer runs without labels. The first 3 sessions are a warm-up that is never tested.
 
 [The method](pipeline.md) walks through every step with its equations and settings. The [API reference](api/index.md) documents every module, class and function.
 
@@ -38,7 +38,7 @@ make maze PARADIGM=Y_Maze SEEDS=42  # one maze, one seed
 make cross-maze                     # compare the saved bundles across mazes and seeds
 ```
 
-The notebooks in `analyses/` orchestrate these runs. The reusable code they import lives in `src/`, which this site documents. The unit tests run offline, with the database client mocked:
+The notebooks in `analyses/` orchestrate these runs. The reusable code they import lives in `src/`, which this site documents. The committed notebooks are executed, so their outputs can be read without database access: `analyses/per_maze.ipynb` holds the Linear Maze run for seed 42, and `analyses/cross_maze.ipynb` the comparison across all mazes and seeds that produces the paper's tables and figures. The unit tests run offline, with the database client mocked:
 
 ```bash
 make src-test       # every src/ unit test
