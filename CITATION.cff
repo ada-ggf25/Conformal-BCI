@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: >-
   If you use this code, please cite the paper below.
 type: software
-title: "conformal-neural-decoding: code for Keeping Neural Decoders Calibrated Session by Session with Learned Class-Conditional Conformal Prediction"
+title: "Conformal-BCI: code for Keeping Neural Decoders Calibrated Session by Session with Learned Class-Conditional Conformal Prediction"
 authors:
   - given-names: Guilherme
     family-names: Grancho Duarte Fernandes
@@ -19,8 +19,8 @@ authors:
   - given-names: Jia
     family-names: Liu
     affiliation: John A. Paulson School of Engineering and Applied Sciences, Harvard University
-repository-code: "https://github.com/ada-ggf25/conformal-neural-decoding"
-url: "https://ada-ggf25.github.io/conformal-neural-decoding/"
+repository-code: "https://github.com/ada-ggf25/Conformal-BCI"
+url: "https://ada-ggf25.github.io/Conformal-BCI/"
 license: Apache-2.0
 keywords:
   - brain-computer interfaces

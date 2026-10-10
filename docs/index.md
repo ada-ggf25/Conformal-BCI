@@ -1,6 +1,6 @@
 # Uncertainty-Aware ML for Neural BCIs
 
-This site documents the code of the [conformal-neural-decoding repository](https://github.com/ada-ggf25/conformal-neural-decoding) for the paper *Keeping Neural Decoders Calibrated Session by Session with Learned Class-Conditional Conformal Prediction*.
+This site documents the code of the [Conformal-BCI repository](https://github.com/ada-ggf25/Conformal-BCI) for the paper *Keeping Neural Decoders Calibrated Session by Session with Learned Class-Conditional Conformal Prediction*.
 
 ---
 

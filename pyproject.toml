@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 packages = ["src"]
 
 [project]
-name = "conformal-neural-decoding"
+name = "conformal-bci"
 version = "0.1.0"
 description = "Uncertainty-Aware Machine Learning for Long-Term Neural Recordings in Flexible Brain–Computer Interfaces"
 authors = [{name = "Guilherme Grancho", email = "guilherme.fernandes25@imperial.ac.uk"}]
@@ -31,7 +31,7 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/ada-ggf25/conformal-neural-decoding"
+Repository = "https://github.com/ada-ggf25/Conformal-BCI"
 
 # `pip install -e ".[dev]"` does not work.
 # Use `uv sync`, or `pip install --group dev`.

@@ -612,7 +612,7 @@ wheels = [
 ]
 
 [[package]]
-name = "conformal-neural-decoding"
+name = "conformal-bci"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
