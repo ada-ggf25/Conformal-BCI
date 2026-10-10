@@ -1,4 +1,11 @@
-"""MongoDB client singleton for the Atlas functional dataset."""
+"""MongoDB client singleton for the Atlas functional dataset.
+
+Connection settings come from the environment (``.env`` is loaded at import):
+``MONGODB_URI`` and ``MONGODB_DATABASE``, plus ``SSH_HOST``, ``SSH_PORT``, ``SSH_USERNAME``
+and ``SSH_PASSWORD`` when the database is only reachable through an SSH tunnel. The client
+and the tunnel are opened lazily on the first ``get_client`` call and shared by the whole
+process.
+"""
 
 from __future__ import annotations
 
@@ -18,12 +25,30 @@ if TYPE_CHECKING:
 
 load_dotenv()
 
+# Process-wide singletons, created by the first get_client() call.
 _client: MongoClient | None = None
 _tunnel: _SSHTunnel | None = None
 
 
 class _SSHTunnel:
-    """Minimal SSH port-forward tunnel."""
+    """Minimal SSH port-forward tunnel.
+
+    Listens on an ephemeral port on 127.0.0.1 and forwards every accepted connection
+    through the SSH server to ``remote_host:remote_port`` (as seen from that server).
+    The connection is opened in the constructor, and a daemon thread accepts clients
+    until ``stop``.
+
+    Args:
+        ssh_host:     SSH server to connect to.
+        ssh_port:     its SSH port.
+        ssh_username: SSH login, or None for paramiko's default.
+        ssh_password: SSH password, or None to rely on keys or an agent.
+        remote_host:  forwarding target, resolved on the SSH server.
+        remote_port:  forwarding target port.
+
+    Attributes:
+        local_bind_port: the local port clients connect to.
+    """
 
     def __init__(
         self,
@@ -53,6 +78,11 @@ class _SSHTunnel:
         threading.Thread(target=self._accept_loop, daemon=True).start()
 
     def _accept_loop(self) -> None:
+        """Accept local clients and relay each through a new SSH channel, until stopped.
+
+        The one-second accept timeout lets the loop notice ``stop``. A client whose channel
+        cannot be opened is closed and the loop carries on; a lost SSH transport ends it.
+        """
         while self._active:
             self._server.settimeout(1.0)
             try:
@@ -74,12 +104,19 @@ class _SSHTunnel:
             ).start()
 
     def stop(self) -> None:
+        """Stop accepting clients and close the listening socket and the SSH connection."""
         self._active = False
         self._server.close()
         self._ssh.close()
 
 
 def _relay(sock: socket.socket, chan: paramiko.Channel) -> None:
+    """Copy bytes both ways between a local socket and an SSH channel until either closes.
+
+    Args:
+        sock: the accepted local client socket.
+        chan: the ``direct-tcpip`` channel to the remote port.
+    """
     while True:
         r, _, _ = select.select([sock, chan], [], [], 1.0)
         if sock in r:
@@ -97,6 +134,11 @@ def _relay(sock: socket.socket, chan: paramiko.Channel) -> None:
 
 
 def _start_tunnel() -> None:
+    """Open the SSH tunnel from the ``SSH_*`` environment variables.
+
+    The tunnel forwards to MongoDB's default port (27017) on the SSH server itself, and is
+    closed at interpreter exit.
+    """
     global _tunnel
     _tunnel = _SSHTunnel(
         ssh_host=os.environ["SSH_HOST"],
@@ -111,6 +153,10 @@ def _start_tunnel() -> None:
 
 def get_client() -> MongoClient:
     """Return the process-wide MongoClient, opening it on first call.
+
+    When ``SSH_HOST`` is set, the first call also opens the SSH tunnel and points the
+    client at it by rewriting ``localhost:27017`` in ``MONGODB_URI`` to the tunnel's local
+    port.
 
     Returns:
         The shared ``pymongo.MongoClient``.

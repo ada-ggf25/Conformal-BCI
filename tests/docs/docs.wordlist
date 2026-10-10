@@ -1,6 +1,8 @@
 # Accepted words for American English spell-checking of project documentation.
 
 Davison
+Duarte
+Fernandes
 Grancho
 Guilherme
 Hao
@@ -14,10 +16,14 @@ MLP
 Jacobian
 VAE
 
+BCI
 BCIs
 PDFs
 
+arXiv
+BibTeX
 mypy
+recalibrated
 regenerable
 reproducibility
 Subpackage
@@ -54,3 +60,21 @@ Hyperparameters
 
 NeurIPS
 preprint
+quantile
+
+# MkDocs pages: pipeline and API terms
+BSON
+checkpointed
+config
+configs
+contrastive
+dicts
+docstring
+docstrings
+GridFS
+GRU
+hyperparameters
+latents
+miscoverage
+unnormalized
+zstd

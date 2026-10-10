@@ -1,16 +1,14 @@
-"""Tests for src/conformal/calibrate.py."""
+"""Tests for src/conformal/calibrate.py.
+
+Accepted gaps: none.
+"""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from src.conformal.calibrate import (
-    class_conditional_quantiles_with_fallback,
-    compute_quantile,
-)
-
-N_CLASSES = 6
+from src.conformal.calibrate import compute_quantile
 
 
 class TestComputeQuantile:
@@ -37,24 +35,27 @@ class TestComputeQuantile:
                 f"alpha={alpha}: coverage {empirical:.4f} < {1 - alpha:.4f}"
             )
 
+    @pytest.mark.parametrize(
+        ("alpha", "expected"),
+        [(0.5, 3.0), (0.2, 5.0), (0.0, np.inf)],
+    )
+    def test_threshold_is_the_exact_order_statistic(self, alpha, expected):
+        """Unsorted scores 1..5 (n = 5): alpha 0.5 -> ceil(3) = 3rd smallest; alpha 0.2 ->
+        ceil(4.8) = 5th; alpha 0 -> the 6th, which does not exist."""
+        assert compute_quantile(np.array([5.0, 1.0, 4.0, 2.0, 3.0]), alpha) == expected
 
-class TestClassConditionalQuantilesWithFallback:
-    def test_starved_region_falls_back_to_global(self):
-        """A region with too few cal scores gets the marginal q_hat, not +inf. This is
-        the production fix for high-K/low-data mazes."""
-        alpha = 0.1
-        # region 0 well populated, region 1 has one score (below the finite-sample floor)
-        scores = np.concatenate([np.linspace(0.0, 1.0, 100), [0.5]])
-        labels = np.array([0] * 100 + [1])
-        q = class_conditional_quantiles_with_fallback(scores, labels, 2, alpha)
-        assert np.isfinite(q[1])
-        assert q[1] == pytest.approx(compute_quantile(scores, alpha))
+    def test_marginal_coverage_on_fresh_exchangeable_data(self):
+        """For n calibration scores and one exchangeable test score, P(test <= q_hat) is exactly
+        ceil((n+1)(1-alpha)) / (n+1): 18/20 = 0.9 for n = 19, alpha = 0.1."""
+        rng = np.random.default_rng(0)
+        trials = 4000
+        hits = 0
+        for _ in range(trials):
+            s = rng.exponential(size=20)
+            hits += s[-1] <= compute_quantile(s[:-1], 0.1)
+        assert abs(hits / trials - 0.9) < 0.015  # about 3 binomial standard errors
 
-    def test_well_populated_matches_the_plain_per_region_quantile(self):
-        """Above the floor the fallback never fires, so the result must equal the plain
-        per-region quantile."""
-        rng = np.random.RandomState(3)
-        scores, labels = rng.rand(600), rng.randint(0, N_CLASSES, size=600)
-        q_fb = class_conditional_quantiles_with_fallback(scores, labels, N_CLASSES, 0.1)
-        for c in range(N_CLASSES):
-            assert q_fb[c] == pytest.approx(compute_quantile(scores[labels == c], 0.1))
+    def test_a_single_score_suffices_at_a_loose_level(self):
+        """n = 1, alpha = 0.5: ceil(2 * 0.5) = 1 <= 1, so the one score is the threshold."""
+        assert compute_quantile(np.array([0.7]), 0.5) == 0.7
+        assert compute_quantile(np.array([0.7]), 0.4) == np.inf  # ceil(1.2) = 2 > 1

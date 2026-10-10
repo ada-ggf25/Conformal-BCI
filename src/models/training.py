@@ -8,6 +8,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from .config import (
+    KL_WARMUP_EPOCHS,
     KL_WEIGHT,
     MAIN_EARLY_STOP_MIN_DELTA,
     MAIN_EARLY_STOP_PATIENCE,
@@ -18,7 +19,44 @@ from .config import (
 from .losses import compute_contrastive_loss, poisson_nll
 
 
+def _weighted_ce_sums(
+    logits: torch.Tensor, targets: torch.Tensor, weights: torch.Tensor
+) -> tuple[float, float]:
+    """Numerator and denominator of a class-weighted cross-entropy mean over one batch.
+
+    Summed over a whole validation block, their ratio is the weighted mean over every
+    window. A per-batch mean is 0/0 = NaN for a batch whose windows all belong to
+    zero-weight classes (regions absent from the training block), and one such batch would
+    make the averaged validation loss NaN.
+
+    Args:
+        logits:  (B, K) class logits.
+        targets: (B,) class indices.
+        weights: (K,) class weights.
+
+    Returns:
+        ``(sum_i w_{y_i} * nll_i, sum_i w_{y_i})``.
+    """
+    num = nn.functional.cross_entropy(logits, targets, weight=weights, reduction="sum")
+    return float(num.item()), float(weights[targets].sum().item())
+
+
+def _weighted_mean(num: float, den: float) -> float:
+    """``num / den``, or NaN when every validation window has zero weight."""
+    return num / den if den > 0 else float("nan")
+
+
 def _es_defaults(patience, min_delta):
+    """Early-stopping patience and minimum delta, each falling back to its config default.
+
+    Args:
+        patience:  epochs without improvement before stopping, or None.
+        min_delta: minimum improvement that resets the patience counter, or None.
+
+    Returns:
+        ``(patience, min_delta)``, with None replaced by ``MAIN_EARLY_STOP_PATIENCE`` and
+        ``MAIN_EARLY_STOP_MIN_DELTA``.
+    """
     p = MAIN_EARLY_STOP_PATIENCE if patience is None else patience
     d = MAIN_EARLY_STOP_MIN_DELTA if min_delta is None else min_delta
     return p, d
@@ -27,7 +65,19 @@ def _es_defaults(patience, min_delta):
 def _step1_param_groups(
     model: nn.Module, weight_decay: float, classifier_weight_decay: float
 ) -> list[dict]:
-    """Adam param groups that regularize the classifier head separately."""
+    """Adam param groups that regularize the classifier head separately.
+
+    Args:
+        model:                   the model to optimize; its ``classifier`` attribute, if
+                                 any, is the head.
+        weight_decay:            decay on the other weight matrices.
+        classifier_weight_decay: decay on every classifier-head parameter.
+
+    Returns:
+        Up to three param groups, empty groups omitted: weight matrices outside the head
+        (``weight_decay``), biases and LayerNorm weights outside the head (no decay), and
+        the whole head (``classifier_weight_decay``).
+    """
     classifier = getattr(model, "classifier", None)
     clf_ids = (
         {id(p) for p in classifier.parameters()} if classifier is not None else set()
@@ -59,7 +109,23 @@ def _inverse_frequency_weights(
     device: torch.device,
     log_fn: Callable[[str], None] | None = None,
 ) -> torch.Tensor:
-    """Inverse-frequency CrossEntropy weights: w_c = (total / (K * count_c)) ** power."""
+    """Inverse-frequency CrossEntropy weights: w_c = (total / (K * count_c)) ** power.
+
+    The weights are then rescaled to sum to K, so the loss keeps its scale. A class absent
+    from ``class_counts`` gets weight 0, and a class with a zero count gets 1 before the
+    rescaling.
+
+    Args:
+        class_counts: ``{class_idx: count}`` over the training windows, or None for
+                      uniform weights.
+        n_classes:    K, the number of classes.
+        power:        exponent on the inverse frequency (0 = uniform, 1 = full).
+        device:       device of the returned tensor.
+        log_fn:       optional sink for a one-line summary of the weights.
+
+    Returns:
+        (K,) float tensor of class weights.
+    """
     if class_counts is None:
         return torch.ones(n_classes, device=device)
     total = sum(class_counts.values())
@@ -95,37 +161,48 @@ def train_step1[M: nn.Module](
     class_weight_power: float = 1.0,
     kl_weight: float = KL_WEIGHT,
     kl_free_bits: float = 0.0,
+    kl_warmup_epochs: int = KL_WARMUP_EPOCHS,
     log_every: int = 50,
 ) -> tuple[M, dict]:
     """Train the BC-VAE encoder (Step 1).
 
     Loss = RECON_WEIGHT * Poisson_NLL + region_weight * CrossEntropy + kl_w * KL,
-    where ``kl_w`` ramps ``kl_weight`` linearly over the first 10 epochs.
+    where ``kl_w`` ramps ``kl_weight`` linearly over the first ``kl_warmup_epochs`` epochs.
+
+    Early stopping ignores the warm-up: the validation loss carries the same ramping KL weight,
+    so a warm-up epoch looks better only because its KL term is under-weighted. No checkpoint
+    is taken and no patience is spent until ``kl_w`` reaches ``kl_weight``.
 
     Args:
-        model:          SharedTemporalClassifier
-        loader:         DataLoader yielding batch_dict (from HybridClassificationDataset)
+        model:          SharedTemporalClassifier; trained in place and returned.
+        loader:         DataLoader over a HybridClassificationDataset, collated by
+                        ``hybrid_collate_fn`` into per-session batch dicts.
         device:         torch.device
         log_fn:         callable(str) for progress output
         n_classes:      number of region labels
-        num_epochs:     training epochs
-        lr:             Adam learning rate (STEP1_LEARNING_RATE=1e-3)
+        num_epochs:     training epochs; also the cosine schedule's period.
+        lr:             AdamW learning rate (STEP1_LEARNING_RATE=1e-3)
         class_counts:   optional dict {class_idx: count} for inverse-frequency weighting
         val_loader:     optional DataLoader for validation loss
         early_stop_patience: epochs without val_loss improvement before stopping
+                        (None = ``MAIN_EARLY_STOP_PATIENCE``).
         early_stop_min_delta: minimum improvement to reset patience counter
+                        (None = ``MAIN_EARLY_STOP_MIN_DELTA``).
         weight_decay:   AdamW L2 decay on the encoder/generator (0.0 = none)
         classifier_weight_decay: AdamW L2 decay applied to the region-classifier head only
         region_weight:  weight on the region CrossEntropy term.
         class_weight_power: exponent applied to inverse-frequency class weights.
         kl_weight:      weight on the KL term.
         kl_free_bits:   per-dimension KL floor in nats (0.0 = off).
+        kl_warmup_epochs: length of the linear KL ramp, also the first epoch early
+                        stopping may select (0 = no ramp).
         log_every:      print a progress line every this many epochs (default 50)
 
     Returns:
         (model, history_dict) where history_dict contains per-epoch lists:
         epoch, loss, recon, region, kl, kl_weight, acc, val_loss, val_recon,
-        val_region and val_kl.
+        val_region and val_kl, plus ``best_epoch``: the 1-based epoch whose weights
+        were restored, or None when none were.
     """
     optimizer = torch.optim.AdamW(
         _step1_param_groups(model, weight_decay, classifier_weight_decay), lr=lr
@@ -143,10 +220,12 @@ def train_step1[M: nn.Module](
     hist: dict = {}
     best_val = float("inf")
     best_state: dict | None = None
+    best_epoch: int | None = None
     stall = 0
 
     for epoch in range(num_epochs):
-        kl_w = kl_weight * min(1.0, (epoch + 1) / 10.0)  # linear warm-up over 10 epochs
+        warmed_up = epoch + 1 >= kl_warmup_epochs
+        kl_w = kl_weight if warmed_up else kl_weight * (epoch + 1) / kl_warmup_epochs
         model.train()
         total_loss = total_recon = total_region = total_kl = 0.0
         correct = total = n_batches = 0
@@ -215,7 +294,7 @@ def train_step1[M: nn.Module](
         val_recon = val_region = val_kl = None
         if val_loader is not None and len(val_loader) > 0:
             model.eval()
-            vtot = vrecon = vregion = vkl = 0.0
+            vrecon = vkl = vr_num = vr_den = 0.0
             vnb = 0
             with torch.no_grad():
                 for batch_dict in val_loader:
@@ -236,20 +315,21 @@ def train_step1[M: nn.Module](
                     lo_v = torch.cat(vlogits)
                     re_v = torch.cat(vregions)
                     recon_v = torch.stack(vsession_recons).mean()
+                    # Validation KL is the plain mean, without the free-bits floor.
                     kl_v = -0.5 * torch.mean(1 + lv_v - mu_v.pow(2) - lv_v.exp())
-                    region_v = criterion(lo_v, re_v)
-                    vtot += (
-                        RECON_WEIGHT * recon_v + region_weight * region_v + kl_w * kl_v
-                    ).item()
+                    num, den = _weighted_ce_sums(lo_v, re_v, class_weights)
+                    vr_num += num
+                    vr_den += den
                     vrecon += recon_v.item()
-                    vregion += region_v.item()
                     vkl += kl_v.item()
                     vnb += 1
             vnb = max(vnb, 1)
-            val_loss = vtot / vnb
             val_recon = vrecon / vnb
-            val_region = vregion / vnb
+            val_region = _weighted_mean(vr_num, vr_den)
             val_kl = vkl / vnb
+            val_loss = (
+                RECON_WEIGHT * val_recon + region_weight * val_region + kl_w * val_kl
+            )
         hist.setdefault("val_loss", []).append(val_loss)
         hist.setdefault("val_recon", []).append(val_recon)
         hist.setdefault("val_region", []).append(val_region)
@@ -266,10 +346,11 @@ def train_step1[M: nn.Module](
                 + (f"  val={val_loss:.4f}" if val_loss is not None else "")
             )
 
-        if val_loss is not None:
+        if val_loss is not None and warmed_up:
             if val_loss < best_val - es_delta:
                 best_val = val_loss
                 best_state = copy.deepcopy(model.state_dict())
+                best_epoch = epoch + 1
                 stall = 0
             else:
                 stall += 1
@@ -280,7 +361,11 @@ def train_step1[M: nn.Module](
     # Restore the weights that minimized val_loss (best-checkpoint early stopping).
     if best_state is not None:
         model.load_state_dict(best_state)
-        log_fn(f"      [Step1] restored best-val weights (val_loss={best_val:.4f})")
+        log_fn(
+            f"      [Step1] restored best-val weights from epoch {best_epoch} "
+            f"(val_loss={best_val:.4f})"
+        )
+    hist["best_epoch"] = best_epoch
 
     return model, hist
 
@@ -306,8 +391,11 @@ def train_step2[M: nn.Module](
 
     Loss = region_weight * CrossEntropy + contrastive_weight * NT-Xent
 
+    Early stopping and the best-checkpoint restore track the validation CrossEntropy
+    alone (``val_region``), not the total loss.
+
     Args:
-        alignment_decoder: AlignmentDecoder
+        alignment_decoder: AlignmentDecoder; trained in place and returned.
         loader:            DataLoader yielding (sequences, regions, session_ids)
                            from LatentSequenceDataset
         device:            torch.device
@@ -321,12 +409,18 @@ def train_step2[M: nn.Module](
         region_weight:     weight on CrossEntropy loss (default 1.0)
         val_loader:        optional validation DataLoader (same format as loader)
         early_stop_patience: epochs without val_region improvement before stopping
+                           (None = ``MAIN_EARLY_STOP_PATIENCE``).
         early_stop_min_delta: minimum improvement to reset patience counter
+                           (None = ``MAIN_EARLY_STOP_MIN_DELTA``).
         log_every:         print a progress line every this many epochs (default 50)
 
     Returns:
         (alignment_decoder, history_dict) where history_dict contains per-epoch lists:
-        epoch, loss, region, contrastive, acc, val_loss, val_region, val_contrastive
+        epoch, loss, region, contrastive, acc, val_loss, val_region, val_contrastive.
+        The ``val_*`` entries are None when there is no validation loader. If early
+        stopping selected an epoch, the returned decoder holds that epoch's weights.
+        Also ``best_epoch``: the 1-based epoch whose weights were restored, or None when
+        none were.
     """
     optimizer = torch.optim.Adam(alignment_decoder.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
@@ -342,6 +436,7 @@ def train_step2[M: nn.Module](
     hist: dict = {}
     best_val = float("inf")
     best_state: dict | None = None
+    best_epoch: int | None = None
     stall = 0
 
     for epoch in range(num_epochs):
@@ -388,27 +483,27 @@ def train_step2[M: nn.Module](
         val_loss = val_region = val_contrastive = None
         if val_loader is not None and len(val_loader) > 0:
             alignment_decoder.eval()
-            vtot = vr = vc = 0.0
+            vr_num = vr_den = vc = 0.0
             vnb = 0
             with torch.no_grad():
                 for sequences, regions, session_ids in val_loader:
                     sequences = sequences.to(device)
                     regions = regions.to(device)
                     _, proj, logits = alignment_decoder(sequences)
-                    rl = criterion(logits, regions)
+                    num, den = _weighted_ce_sums(logits, regions, class_weights)
+                    vr_num += num
+                    vr_den += den
                     cl = compute_contrastive_loss(
                         proj,
                         regions.cpu().numpy().tolist(),
                         session_ids.numpy().tolist(),
                         temperature=TEMPERATURE,
                     )
-                    vtot += (region_weight * rl + contrastive_weight * cl).item()
-                    vr += rl.item()
                     vc += cl.item()
                     vnb += 1
-            val_loss = vtot / max(vnb, 1)
-            val_region = vr / max(vnb, 1)
+            val_region = _weighted_mean(vr_num, vr_den)
             val_contrastive = vc / max(vnb, 1)
+            val_loss = region_weight * val_region + contrastive_weight * val_contrastive
         hist.setdefault("val_loss", []).append(val_loss)
         hist.setdefault("val_region", []).append(val_region)
         hist.setdefault("val_contrastive", []).append(val_contrastive)
@@ -432,6 +527,7 @@ def train_step2[M: nn.Module](
             if metric < best_val - es_delta:
                 best_val = metric
                 best_state = copy.deepcopy(alignment_decoder.state_dict())
+                best_epoch = epoch + 1
                 stall = 0
             else:
                 stall += 1
@@ -443,5 +539,6 @@ def train_step2[M: nn.Module](
     if best_state is not None:
         alignment_decoder.load_state_dict(best_state)
         log_fn(f"      [Step2] restored best-val weights (val_metric={best_val:.4f})")
+    hist["best_epoch"] = best_epoch
 
     return alignment_decoder, hist

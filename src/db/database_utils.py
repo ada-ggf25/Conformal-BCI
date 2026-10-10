@@ -15,9 +15,14 @@ if TYPE_CHECKING:
 def session_name_to_date_id(db: Database, session_name: str) -> ObjectId:
     """Resolve a session name to its MongoDB date document _id.
 
+    The mouse's ``dates`` documents are matched on their ``pos_path``, which must contain
+    the date as ``YYMMDD`` or ``YY.MM.DD``. When several match, the one whose path contains
+    the full session name wins; failing that, the first match is used and a warning is
+    printed.
+
     Args:
-        db:           pymongo Database
-        session_name: e.g. "M21_250214"
+        db:           pymongo Database.
+        session_name: e.g. ``"M21_250214"``.
 
     Returns:
         ObjectId of the matching document in the dates collection.

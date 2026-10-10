@@ -18,6 +18,11 @@ from .config import HIDDEN_DIM, LATENT_DIM, STEP2_SEQ_LEN
 class AlignmentDecoder(nn.Module):
     """Transformer encoder that aligns a sequence of latents across sessions.
 
+    The latents are projected to ``d_model``, given a learned positional embedding, and
+    passed through a pre-norm Transformer encoder. The last position's output is mapped
+    back to ``latent_dim`` as the aligned latent. Two heads read it: a projector for the
+    contrastive loss and the region classifier.
+
     Args:
         latent_dim: BC-VAE latent dimension (default: LATENT_DIM=16)
         n_classes:  number of region labels (8 for R0-R7)

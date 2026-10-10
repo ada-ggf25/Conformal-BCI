@@ -12,7 +12,7 @@ def class_conditional_prediction_sets(
 
     C(x): each class is admitted using its own calibrated threshold applied to the scaled
     non-conformity score. Combines ``scale_of`` (the trained shared σ) with per-region
-    ``qhats`` from ``class_conditional_quantiles_with_fallback`` computed on the
+    ``qhats`` from ``src.chain.pool.pooled_qhats`` computed on the
     scaled calibration scores.
 
     Args:
@@ -37,77 +37,3 @@ def class_conditional_prediction_sets(
         [int(c) for c in range(n_classes) if scaled[i, c] <= q[c]]
         for i in range(len(p))
     ]
-
-
-def empirical_coverage(sets: list[list[int]], labels: np.ndarray) -> float:
-    """Fraction of samples whose true label falls inside the prediction set."""
-    hits = sum(int(lbl) in s for s, lbl in zip(sets, labels, strict=False))
-    return hits / len(labels) if len(labels) > 0 else 0.0
-
-
-def _mean_by_class(
-    values: np.ndarray,
-    sets: list[list[int]],
-    labels: np.ndarray,
-    n_classes: int,
-    min_count: int,
-) -> dict[int, float]:
-    """Mean of a per-window quantity, grouped by true label, NaN below ``min_count``.
-
-    The shared body of ``coverage_by_class`` and ``size_by_class``, so the two read
-    their per-region statistics off the same windows under the same gate.
-    """
-    labels = np.asarray(labels)
-    if len(sets) != labels.shape[0]:
-        raise ValueError(
-            f"sets (n={len(sets)}) and labels (n={labels.shape[0]}) must align"
-        )
-    out: dict[int, float] = {}
-    for c in range(n_classes):
-        mask = labels == c
-        count = int(mask.sum())
-        out[c] = (
-            float(values[mask].mean()) if count >= max(min_count, 1) else float("nan")
-        )
-    return out
-
-
-def coverage_by_class(
-    sets: list[list[int]],
-    labels: np.ndarray,
-    n_classes: int,
-    min_count: int = 1,
-) -> dict[int, float]:
-    """Class-conditional empirical coverage, split by true label.
-
-    ``coverage_c`` = fraction of samples whose true label is ``c`` that have
-    ``c`` inside their prediction set ``C(x)``.
-
-    Returns:
-        dict {class_index: coverage in [0, 1]}: classes with < ``min_count`` true
-        samples map to NaN. Every class in ``range(n_classes)`` is present.
-    """
-    hits = np.array(
-        [int(lbl) in s for s, lbl in zip(sets, labels, strict=False)], dtype=bool
-    )
-    return _mean_by_class(hits, sets, labels, n_classes, min_count)
-
-
-def size_by_class(
-    sets: list[list[int]],
-    labels: np.ndarray,
-    n_classes: int,
-    min_count: int = 1,
-) -> dict[int, float]:
-    """Mean prediction-set size split by true label.
-
-    Reading this beside ``coverage_by_class`` on the same
-    ``min_count`` gate gives the per-region coverage/sharpness pair.
-
-    Returns:
-        dict {class_index: mean |C(x)| over samples of that true class}: classes with
-        < ``min_count`` true samples map to NaN. Every class in ``range(n_classes)``
-        is present.
-    """
-    sizes = np.array([len(s) for s in sets], dtype=float)
-    return _mean_by_class(sizes, sets, labels, n_classes, min_count)

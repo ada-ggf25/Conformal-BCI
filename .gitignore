@@ -15,15 +15,17 @@ site/
 # Ruff cache
 .ruff_cache/
 
+# AI-generated files
 **CLAUDE.md
 **AGENTS.md
 
 # submodules
 .gitmodules
 Vault-ML-Decoding/
+
 # Generated analysis outputs (heavy, regenerable) and old local run snapshots
 analyses/artifacts/
 analyses/checkpoints/
 
-# LaTeX build output
-paper/build/
+# Coverage data from make src-coverage
+.coverage

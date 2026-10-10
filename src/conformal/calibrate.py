@@ -1,4 +1,8 @@
-"""Calibration functions: compute the score threshold q_hat from a held-out set."""
+"""Calibration functions: compute the score threshold q_hat from a held-out set.
+
+If the calibration and test scores are exchangeable, a test score falls at or below q_hat
+with probability at least 1 - alpha.
+"""
 
 from __future__ import annotations
 
@@ -28,37 +32,3 @@ def compute_quantile(scores: np.ndarray, alpha: float) -> float:
     if k > n:
         return np.inf
     return float(np.sort(scores)[k - 1])
-
-
-def class_conditional_quantiles_with_fallback(
-    scores: np.ndarray,
-    labels: np.ndarray,
-    n_classes: int,
-    alpha: float,
-) -> dict[int, float]:
-    """Class-conditional q_hat with a global-q_hat fallback for data-starved regions.
-
-    A region needs at least ``ceil(1/alpha) - 1`` calibration scores to support its own finite
-    (1-alpha) quantile. Below that, a plain per-region quantile is +inf, admitting the whole
-    label space for that region. Here a starved region instead falls back to the global-q_hat.
-    Still a valid threshold, and the production fix for low-data mazes.
-
-    Args:
-        scores:    (n,) non-conformity scores on the calibration block. For a learned scale
-                   these are already sigma-scaled: (1 - p_hat_y) / sigma(x).
-        labels:    (n,) true region index per calibration window.
-        n_classes: total number of regions.
-        alpha:     miscoverage level.
-
-    Returns:
-        dict {region: q_hat} with every region in range(n_classes) present. A region that
-        took the fallback keeps marginal validity but no longer carries its own
-        class-conditional coverage guarantee.
-    """
-    floor = int(np.ceil(1.0 / alpha)) - 1
-    q_global = compute_quantile(scores, alpha)
-    out: dict[int, float] = {}
-    for c in range(n_classes):
-        sc = scores[labels == c]
-        out[c] = compute_quantile(sc, alpha) if len(sc) > floor else q_global
-    return out
